@@ -1,0 +1,8 @@
+dist/
+tmp/
+node_modules/
+schema.json
+package-lock.json
+CHANGELOG.md
+# Templates are rendered by skanvil; keep their exact bytes (tabs in README entries, placeholders).
+templates/

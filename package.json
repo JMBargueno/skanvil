@@ -1,0 +1,88 @@
+{
+  "name": "skanvil",
+  "version": "1.0.0",
+  "description": "CLI to generate, extend, validate and sync libraries of Agent Skills.",
+  "author": "Jose Manuel Bargueño López <contact@jmbargueno.com>",
+  "license": "MIT",
+  "homepage": "https://github.com/jmbargueno/skanvil#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jmbargueno/skanvil.git"
+  },
+  "bugs": {
+    "url": "https://github.com/jmbargueno/skanvil/issues"
+  },
+  "type": "module",
+  "bin": {
+    "skanvil": "./dist/cli.js"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./schema.json": "./schema.json",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "templates",
+    "agent-skill",
+    "schema.json",
+    "docs",
+    "!docs/assets",
+    "README.md",
+    "ARCHITECTURE.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsup && node scripts/build-schema.mjs",
+    "dev": "tsx src/cli.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "prepublishOnly": "npm run lint && npm run typecheck && npm run build && npm test"
+  },
+  "keywords": [
+    "agent-skills",
+    "skills",
+    "skill-md",
+    "cli",
+    "scaffolder",
+    "claude-code",
+    "copilot",
+    "codex"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@inquirer/prompts": "^7.10.1",
+    "commander": "^14.0.3",
+    "picocolors": "^1.1.1",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.5",
+    "@types/node": "^26.6.6",
+    "eslint": "^9.39.5",
+    "globals": "^17.14.0",
+    "prettier": "^3.9.10",
+    "tsup": "^8.5.1",
+    "tsx": "^4.23.15",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.72.2",
+    "vitest": "^3.2.7"
+  }
+}

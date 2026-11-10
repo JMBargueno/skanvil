@@ -1,0 +1,26 @@
+{
+  "name": "{{packageName}}",
+  "version": "0.1.0",
+  "description": "{{description}}",
+  "files": [
+    "skills",
+    "README.md",
+    ".skanvilrc.json"
+  ],
+  "scripts": {
+    "test": "skanvil validate --strict && skanvil index --check",
+    "prebuild": "skanvil validate",
+    "skill:add": "skanvil add",
+    "skill:edit": "skanvil edit",
+    "skill:list": "skanvil list",
+    "skill:doctor": "skanvil doctor --fix",
+    "skill:sync": "skanvil sync"
+  },
+  "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {
+    "skanvil": "^1.0.0"
+  }
+}
