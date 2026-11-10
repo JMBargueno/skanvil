@@ -39,7 +39,7 @@ templates/
 tests/                     vitest: unit, core end-to-end, and real-CLI suites (tests/setup bundles the CLI)
 scripts/build-schema.mjs   writes schema.json from the zod schema after the build
 docs/                      user guides (docs/assets is not published to npm)
-.github/workflows/         ci.yml (lint, format, typecheck, build, test) and release.yml (npm publish on v* tags)
+.github/workflows/         ci.yml (lint, format, typecheck, build, test) and release.yml (release-please PR + npm publish after green CI on main)
 ```
 
 ## Data flow

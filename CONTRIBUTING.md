@@ -46,7 +46,7 @@ Every behaviour change needs a test. Prefer asserting on files written to disk o
 - **JSDoc on every exported symbol:** a summary sentence, plus `@param`, `@returns` and `@throws`, and `@example` for public entry points. The comments end up in `dist/index.d.ts`, so treat them as user documentation.
 - **Core functions:** take a `Library` (or a `LibraryRef`), return data, throw `Error` with a message a user can act on.
 - **Commands:** return an exit code, support `--json`, and print through `Output`.
-- **Commits:** Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`).
+- **Commits:** Conventional Commits (`feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`). They decide the next version; see [Releases](#releases).
 
 ## Common changes
 
@@ -86,24 +86,42 @@ Edit `templates/skill/` or `templates/library/`.
 - Remember that `templates/library/gitignore` becomes `.gitignore`.
 - Run the tests: they validate freshly generated skills.
 
-## Release checklist
+## Releases
 
-Releases are published by `.github/workflows/release.yml` when a `vX.Y.Z` tag is pushed. The workflow:
+Releases are automated with [release-please](https://github.com/googleapis/release-please). Versions come from commit messages, so **follow Conventional Commits**:
 
-- checks that the tag matches `package.json`;
-- runs every check;
-- publishes to npm with provenance;
-- creates the GitHub release.
+| Commit                                          | Release                                  |
+| ----------------------------------------------- | ---------------------------------------- |
+| `fix: …`                                        | patch (1.0.0 → 1.0.1)                    |
+| `feat: …`                                       | minor (1.0.0 → 1.1.0)                    |
+| `feat!: …` or a `BREAKING CHANGE:` footer       | major (1.0.0 → 2.0.0)                    |
+| `docs:`                                         | no release, listed in the next changelog |
+| `chore:`, `refactor:`, `test:`, `ci:`, `build:` | no release, hidden from the changelog    |
 
-It needs an `NPM_TOKEN` repository secret (an npm automation token).
+How a release happens (`.github/workflows/release.yml`):
 
-1. `npm run lint && npm run format:check && npm run typecheck && npm run build && npm test`
-2. Update `CHANGELOG.md` and bump `version` in `package.json` (`npm version <patch|minor|major> --no-git-tag-version`). If the major version changes, also bump the `skanvil` range in `templates/library/package.json`.
-3. Smoke-test the tarball:
-   ```bash
-   npm pack --pack-destination /tmp/skanvil-smoke
-   cd /tmp/skanvil-smoke && npm init -y && npm i ./skanvil-*.tgz
-   npx skanvil init lib --no-git && npx skanvil add -C lib --type front --name x --description "X"
-   npx skanvil validate -C lib
-   ```
-4. Commit, then tag and push: `git tag v1.2.3 && git push origin main v1.2.3`.
+1. **After CI passes on a push to `main`**, release-please opens or updates a `chore: release X.Y.Z` pull request. It bumps `package.json` and `package-lock.json`, and writes the `CHANGELOG.md` entry from the commits since the last release.
+2. **Merge that pull request when you want to ship.** Until then it keeps accumulating changes.
+3. **After CI passes on the merge commit**, release-please tags `vX.Y.Z` and creates the GitHub release. The `publish` job then publishes that exact commit to npm with provenance. `prepublishOnly` runs lint, typecheck, build and tests once more first.
+
+Nothing is released if CI fails on `main`.
+
+### One-time setup
+
+- **npm token:** add an npm automation token as the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions). The `publish` job runs in the `npm` environment, which GitHub creates on first use. You can add required reviewers there for a manual approval before each publish.
+- **Pull request permission:** in Settings → Actions → General → Workflow permissions, enable _Allow GitHub Actions to create and approve pull requests_.
+- **CI on release pull requests (optional):** pull requests opened with the default `GITHUB_TOKEN` do not trigger the `ci` workflow. To get checks on them, add a fine-grained personal access token as `RELEASE_PLEASE_TOKEN` (repository contents and pull requests: read/write). The workflow uses it when present.
+- **After the first release:** the first release is pinned to 1.0.0 with `"release-as": "1.0.0"` in `release-please-config.json`. Remove that line once 1.0.0 is published, otherwise every release PR would propose 1.0.0 again.
+
+### Before merging a release pull request
+
+- If it is a major release, bump the `skanvil` range in `templates/library/package.json` (for example `^2.0.0`) in a `fix:` or `chore:` commit first.
+- Optionally smoke-test the tarball:
+  ```bash
+  npm pack --pack-destination /tmp/skanvil-smoke
+  cd /tmp/skanvil-smoke && npm init -y && npm i ./skanvil-*.tgz
+  npx skanvil init lib --no-git && npx skanvil add -C lib --type front --name x --description "X"
+  npx skanvil validate -C lib
+  ```
+
+Never edit `version` in `package.json`, create `v*` tags or edit `CHANGELOG.md` by hand: release-please owns them.
