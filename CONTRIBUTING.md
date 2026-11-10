@@ -3,7 +3,7 @@
 ## Setup
 
 ```bash
-git clone https://github.com/jmbargueno/skanvil.git && cd skanvil
+git clone https://github.com/JMBargueno/skanvil.git && cd skanvil
 npm install
 npm test
 ```

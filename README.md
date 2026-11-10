@@ -4,7 +4,7 @@
 
 # skanvil
 
-[![ci](https://github.com/jmbargueno/skanvil/actions/workflows/ci.yml/badge.svg)](https://github.com/jmbargueno/skanvil/actions/workflows/ci.yml)
+[![ci](https://github.com/JMBargueno/skanvil/actions/workflows/ci.yml/badge.svg)](https://github.com/JMBargueno/skanvil/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/skanvil.svg)](https://www.npmjs.com/package/skanvil)
 [![license: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 

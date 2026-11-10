@@ -4,13 +4,13 @@
   "description": "CLI to generate, extend, validate and sync libraries of Agent Skills.",
   "author": "Jose Manuel Bargueño López <contact@jmbargueno.com>",
   "license": "MIT",
-  "homepage": "https://github.com/jmbargueno/skanvil#readme",
+  "homepage": "https://github.com/JMBargueno/skanvil#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/jmbargueno/skanvil.git"
+    "url": "git+https://github.com/JMBargueno/skanvil.git"
   },
   "bugs": {
-    "url": "https://github.com/jmbargueno/skanvil/issues"
+    "url": "https://github.com/JMBargueno/skanvil/issues"
   },
   "type": "module",
   "bin": {
