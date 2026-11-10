@@ -108,10 +108,29 @@ Nothing is released if CI fails on `main`.
 
 ### One-time setup
 
-- **npm token:** add an npm automation token as the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions). The `publish` job runs in the `npm` environment, which GitHub creates on first use. You can add required reviewers there for a manual approval before each publish.
+- **npm token (first publish only):** on npmjs.com, go to Access Tokens → Generate New Token → Granular Access Token. Enable _Bypass two-factor authentication_ and give it _Read and write_ on all packages (`skanvil` does not exist yet). Save it as the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions). Write tokens expire (at most 90 days), so this is only a bridge until [Trusted Publishing](#trusted-publishing) is set up. The `publish` job runs in the `npm` environment, which GitHub creates on first use. You can add required reviewers there for a manual approval before each publish.
 - **Pull request permission:** in Settings → Actions → General → Workflow permissions, enable _Allow GitHub Actions to create and approve pull requests_.
 - **CI on release pull requests (optional):** pull requests opened with the default `GITHUB_TOKEN` do not trigger the `ci` workflow. To get checks on them, add a fine-grained personal access token as `RELEASE_PLEASE_TOKEN` (repository contents and pull requests: read/write). The workflow uses it when present.
 - **After the first release:** the first release is pinned to 1.0.0 with `"release-as": "1.0.0"` in `release-please-config.json`. Remove that line once 1.0.0 is published, otherwise every release PR would propose 1.0.0 again.
+
+### Trusted Publishing
+
+After 1.0.0 is on npm, switch from the token to [Trusted Publishing](https://docs.npmjs.com/trusted-publishers). GitHub Actions then authenticates with OIDC: there is no secret to rotate or leak, and provenance is automatic. The workflow already supports it: npm tries OIDC first and only falls back to `NPM_TOKEN`.
+
+1. On npmjs.com, open the `skanvil` package → Settings → Trusted Publisher → GitHub Actions, and enter:
+   - organization or user: `JMBargueno`;
+   - repository: `skanvil`;
+   - workflow filename: `release.yml`;
+   - environment: `npm`.
+2. Publish the next release within 2 days: a new trusted publisher configuration expires if it is not used by then.
+3. Once a release has published through OIDC, delete the `NPM_TOKEN` secret in GitHub and revoke the token on npmjs.com. Optionally, set the package's publishing access to require 2FA and disallow tokens.
+
+If publishing fails with `ENEEDAUTH`, check:
+
+- the workflow filename and environment configured on npm;
+- that the job has `id-token: write`;
+- that it runs on a GitHub-hosted runner;
+- that `repository.url` in `package.json` matches the GitHub repository.
 
 ### Before merging a release pull request
 
