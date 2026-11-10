@@ -108,14 +108,14 @@ Nothing is released if CI fails on `main`.
 
 ### One-time setup
 
-- **npm token (first publish only):** on npmjs.com, go to Access Tokens → Generate New Token → Granular Access Token. Enable _Bypass two-factor authentication_ and give it _Read and write_ on all packages (`skanvil` does not exist yet). Save it as the `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions). Write tokens expire (at most 90 days), so this is only a bridge until [Trusted Publishing](#trusted-publishing) is set up. The `publish` job runs in the `npm` environment, which GitHub creates on first use. You can add required reviewers there for a manual approval before each publish.
+- **npm authentication:** 1.0.0 was published manually from a maintainer machine (`npm publish --provenance=false`), because a package must exist before a trusted publisher can be configured. From then on the workflow publishes with [Trusted Publishing](#trusted-publishing) and needs no token. `NPM_TOKEN` is only an optional fallback: a granular token with _Read and write_ on `skanvil`, stored as a repository secret. npm restricts tokens that bypass 2FA, so prefer Trusted Publishing. The `publish` job runs in the `npm` environment, which GitHub creates on first use. You can add required reviewers there for a manual approval before each publish.
 - **Pull request permission:** in Settings → Actions → General → Workflow permissions, enable _Allow GitHub Actions to create and approve pull requests_.
 - **CI on release pull requests (optional):** pull requests opened with the default `GITHUB_TOKEN` do not trigger the `ci` workflow. To get checks on them, add a fine-grained personal access token as `RELEASE_PLEASE_TOKEN` (repository contents and pull requests: read/write). The workflow uses it when present.
-- **After the first release:** the first release is pinned to 1.0.0 with `"release-as": "1.0.0"` in `release-please-config.json`. Remove that line once 1.0.0 is published, otherwise every release PR would propose 1.0.0 again.
+- **After the first release:** the first release is pinned to 1.0.0 with `"release-as": "1.0.0"` in `release-please-config.json`. Keep it until the `chore: release 1.0.0` pull request is merged and the `v1.0.0` tag exists. Removing it earlier makes release-please recompute the version from `0.0.0`. Remove it right after, otherwise every release PR would propose 1.0.0 again. Merging that PR is safe even though 1.0.0 is already on npm: the `publish` job skips versions that already exist.
 
 ### Trusted Publishing
 
-After 1.0.0 is on npm, switch from the token to [Trusted Publishing](https://docs.npmjs.com/trusted-publishers). GitHub Actions then authenticates with OIDC: there is no secret to rotate or leak, and provenance is automatic. The workflow already supports it: npm tries OIDC first and only falls back to `NPM_TOKEN`.
+Since 1.0.0 is on npm, releases can use [Trusted Publishing](https://docs.npmjs.com/trusted-publishers). GitHub Actions then authenticates with OIDC: there is no secret to rotate or leak, and provenance is automatic. The workflow already supports it: npm tries OIDC first and only falls back to `NPM_TOKEN`.
 
 1. On npmjs.com, open the `skanvil` package → Settings → Trusted Publisher → GitHub Actions, and enter:
    - organization or user: `JMBargueno`;
