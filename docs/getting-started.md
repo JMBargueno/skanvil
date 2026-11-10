@@ -2,6 +2,8 @@
 
 This guide creates a skills library, adds and edits skills, checks them in CI, publishes the library and installs its skills into an application repository.
 
+> **Prefer menus?** Run `npx skanvil` without arguments in a terminal. The [wizard](commands.md#wizard) walks through every step below. After each action it prints the equivalent command, which is the one this guide uses.
+
 ## 1. Create a library
 
 ```bash

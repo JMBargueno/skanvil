@@ -17,11 +17,13 @@ import {
   DEFAULT_PLACEHOLDERS,
   DEFAULT_REQUIRED_SECTIONS,
   resolveConfig,
+  type RawCategory,
   type RawConfig
 } from "./config.js";
 import { Library } from "./library.js";
 import { toKebabCase, toTitleCase } from "./naming.js";
 import { buildSections } from "./readme-index.js";
+import { resolveTarget } from "./sync.js";
 import { builtinTemplate, copyTemplateDir, ejectSkillTemplate } from "./templates.js";
 
 const defaultCategories = new Categories(resolveConfig().categories);
@@ -64,6 +66,11 @@ export interface CreateLibraryOptions {
   description?: string;
   /** Indexed categories of the default preset to create README sections for. @defaultValue `"all"` */
   profile?: string;
+  /**
+   * Custom categories, written to `.skanvilrc.json` instead of the default preset. `profile` is
+   * ignored when they are given, and a README section is created for every indexed category.
+   */
+  categories?: RawCategory[];
   /** Run `git init` in the new folder. @defaultValue `true` */
   git?: boolean;
   /** Copy the built-in skill template to `.skanvil/templates/skill`. @defaultValue `false` */
@@ -97,13 +104,15 @@ export interface CreateLibraryResult {
  * - package.json with `skanvil` scripts;
  * - agent instruction files;
  * - a CI workflow;
- * - a complete `.skanvilrc.json` with the default preset, restricted to the chosen profile;
+ * - a complete `.skanvilrc.json` with the given categories, or the default preset restricted to the
+ *   chosen profile;
  * - the `skanvil` agent skill in the library's agent folders (see {@link installAgentSkill}).
  *
  * @param target - Destination folder; it must be empty or not exist.
  * @param options - Library settings.
  * @returns What was created.
- * @throws Error when the folder is not empty, the name is empty, or the profile is invalid.
+ * @throws Error when the folder is not empty, the name is empty, the profile or categories are
+ *   invalid, or a sync target leaves the library folder. Nothing is written in those cases.
  *
  * @example
  * ```ts
@@ -124,16 +133,25 @@ export async function createLibrary(target: string, options: CreateLibraryOption
   const scope = options.scope ? toKebabCase(String(options.scope).replace(/^@/, "")) : "";
   const title = toTitleCase(name.replace(/-/g, " "));
   const description = options.description || `Library of reusable Agent Skills: ${title}.`;
-  const profile = parseProfile(options.profile);
   const syncTargets = options.syncTargets ?? ["claude"];
 
-  // Keep the selected indexed categories plus every non-indexed one and the default.
-  const categories = DEFAULT_CATEGORIES.filter(
-    (category) => profile.includes(category.id) || category.indexed === false || category.default
-  );
-  const sectionTitles = defaultCategories.indexed
-    .filter((category) => profile.includes(category.id))
-    .map((category) => category.title);
+  let categories: RawCategory[];
+  let sectionTitles: string[];
+  if (options.categories) {
+    categories = options.categories;
+    sectionTitles = new Categories(resolveConfig({ categories }).categories).indexed.map((category) => category.title);
+  } else {
+    // Keep the selected indexed categories plus every non-indexed one and the default.
+    const profile = parseProfile(options.profile);
+    categories = DEFAULT_CATEGORIES.filter(
+      (category) => profile.includes(category.id) || category.indexed === false || category.default
+    );
+    sectionTitles = defaultCategories.indexed
+      .filter((category) => profile.includes(category.id))
+      .map((category) => category.title);
+  }
+  // Fail on invalid targets before anything is written.
+  for (const syncTarget of syncTargets) resolveTarget(target, syncTarget);
 
   await copyTemplateDir(builtinTemplate("library"), target, {
     variables: {

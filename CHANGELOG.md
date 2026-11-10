@@ -12,6 +12,7 @@ First public release.
 
 - **CLI commands**:
   - `init`, `add`, `edit`, `list`, `validate`, `index`, `doctor`, `templates eject`, `sync` and `install-skill`;
+  - an interactive wizard (`skanvil` without arguments in a terminal, or `skanvil wizard`) that creates libraries, including with custom categories, and manages and installs skills. Installs show a preview, and every action prints its equivalent command;
   - every command accepts `--json`, and every library command accepts `--cwd`.
 - **Configurable categories** in `.skanvilrc.json`: prefixes, README titles, aliases, metadata, and `indexed`/`validated` flags. Also config sections for `validation`, `templates` and `sync`. A JSON Schema is published as `skanvil/schema.json`.
 - **Validation** against the Agent Skills spec and library conventions, with per-rule severities (`error`, `warn`, `off`), `--strict` and JSON output. It also checks that files referenced from `SKILL.md` exist (`broken-references`) and warns while scaffolded template text is still present (`template-unchanged`).

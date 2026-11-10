@@ -32,6 +32,7 @@ Change skills libraries through the `skanvil` CLI, so that skill folders, the `S
 - **Never rename, move or delete skill folders by hand, and never hand-edit the README index.** Use `skanvil edit`, which keeps the folder, the frontmatter `name`, the `# heading` and the README entry in sync, and rolls back on failure.
 - **Never create skill folders by hand.** Use `skanvil add`, which applies the category prefix, the template, the frontmatter metadata and the README entry.
 - **Always pass every option in non-interactive shells.** `add` needs `--type`, `--name` and `--description`. `edit --remove` needs `--yes`. Otherwise the command prompts, or fails without a TTY.
+- **Never run `skanvil` without arguments or `skanvil wizard`.** They open an interactive menu meant for humans. Use the explicit commands below. If the user prefers menus, suggest they run `npx skanvil` themselves.
 - Add `--json` whenever you need to parse output. Data goes to stdout; warnings and errors go to stderr.
 - Run `npx skanvil validate` after every change and finish with no errors. Exit code `1` means errors, or warnings when `--strict` is used.
 - Prefix every command with `npx` unless `skanvil` is on PATH. Use `-C <path>` to target a library in another folder.

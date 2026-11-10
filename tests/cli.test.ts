@@ -65,6 +65,24 @@ describe("program", () => {
     expect(skanvil(["nope"], tmp()).code).toBe(1);
   });
 
+  test("the wizard refuses to run without a terminal", () => {
+    const run = skanvil(["wizard"], tmp());
+    expect(run.code).toBe(1);
+    expect(run.stderr).toMatch(/needs an interactive terminal/);
+  });
+
+  test("init --target sets the sync targets and where the agent skill goes", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--target", "copilot,agents"], dir).code).toBe(0);
+    const rc = JSON.parse(fs.readFileSync(path.join(dir, "lib", ".skanvilrc.json"), "utf8"));
+    expect(rc.sync.targets).toEqual(["copilot", "agents"]);
+    expect(fs.existsSync(path.join(dir, "lib", ".github", "skills", "skanvil"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "lib", ".agents", "skills", "skanvil"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "lib", ".claude"))).toBe(false);
+    expect(skanvil(["init", "other", "--target", "../escape"], dir).stderr).toMatch(/must be a folder inside/);
+    expect(fs.existsSync(path.join(dir, "other"))).toBe(false);
+  });
+
   test("errors are reported as 'skanvil: <message>'", () => {
     const run = skanvil(["list"], tmp());
     expect(run.code).toBe(1);

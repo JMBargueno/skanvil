@@ -6,7 +6,7 @@ Every command accepts `-C, --cwd <path>` (library root) and `--json`. Exit code 
 
 | Command                | Options                                                                                                                                                                                                      |
 | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`                                                                                |
+| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--target <preset\|path>`                                                     |
 | `add`                  | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                                          |
 | `edit <skill>`         | `--rename`, `--type`, `--title`, `--description`, `--remove`, `--yes`, `--skip-validate`                                                                                                                     |
 | `list`                 | `--category <id>`                                                                                                                                                                                            |

@@ -11,7 +11,8 @@ src/
 ├── commands/              thin CLI layer: options → core call → text or JSON output
 │   ├── shared.ts          --cwd handling, diagnostic printing, post-mutation validation
 │   ├── skills.ts          add, edit, list (interactive prompts via @inquirer/prompts)
-│   └── library.ts         init, validate, index, doctor, templates eject, sync
+│   ├── library.ts         init, validate, index, doctor, templates eject, install-skill, sync
+│   └── wizard.ts          interactive menu-driven assistant on top of the same core calls
 ├── core/                  all behaviour; no console output, no process exit
 │   ├── config.ts          .skanvilrc.json zod schema, default preset, resolution and checks
 │   ├── categories.ts      id/alias lookup, longest-prefix inference, name and title building

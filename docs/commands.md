@@ -8,14 +8,14 @@ skanvil <command> [options]
 
 - `-h, --help` shows help.
 - `--version` prints the version.
-- Running `skanvil` without a command prints help and exits with code 1.
+- Running `skanvil` without a command opens the [wizard](#wizard) in an interactive terminal. In CI or a pipe it prints the help and exits with code 1.
 
 **Common options:**
 
-| Option             | Description                                                                                                                              |
-| ------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `-C, --cwd <path>` | Library root. Default: the current directory. For `sync`, this is the _source_ library. Every command except `install-skill` accepts it. |
-| `--json`           | Print machine-readable JSON on stdout. Informational text is suppressed; warnings and errors still go to stderr.                         |
+| Option             | Description                                                                                                                                           |
+| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-C, --cwd <path>` | Library root. Default: the current directory. For `sync`, this is the _source_ library. Every command except `wizard` and `install-skill` accepts it. |
+| `--json`           | Print machine-readable JSON on stdout. Informational text is suppressed; warnings and errors still go to stderr.                                      |
 
 **Exit codes:**
 
@@ -24,19 +24,40 @@ skanvil <command> [options]
 
 ---
 
+## `wizard`
+
+An interactive assistant. `skanvil` runs it when called with no arguments in a terminal, and `skanvil wizard` starts it explicitly. It needs a TTY: without one it fails with exit code 1.
+
+The menu depends on the current folder:
+
+| Where             | Actions                                                                                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Outside a library | Create a library (default preset, your own categories, or no categories); install skills from a library into this folder; install the agent skill.                                    |
+| Inside a library  | Add a skill; edit, rename, move or delete one; list skills; check the library and apply automatic fixes; install the skills into a project or for your user; install the agent skill. |
+
+How it behaves:
+
+- After creating a library, the wizard continues inside it.
+- Installs always show a dry-run preview and ask before writing.
+- Deleting a skill asks for confirmation.
+- After every action it prints the equivalent command with all its flags.
+- An error inside an action is reported and the menu comes back.
+- Ctrl+C or **Exit** ends the wizard.
+
 ## `init [dir]`
 
 Create a new library in `dir`. If `dir` is omitted, `--cwd` or the current directory is used. The folder must be empty or not exist.
 
-| Option                  | Description                                                                                                                             |
-| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| `--name <value>`        | Library and package name, kebab-cased. Default: the folder name.                                                                        |
-| `--scope <value>`       | npm scope (`acme` or `@acme`). The package becomes `@acme/<name>`.                                                                      |
-| `--description <value>` | Description for the README and package.json.                                                                                            |
-| `--profile <list>`      | README sections to create from the default preset: any of `front,back,transversal`, or `all` (default). Aliases such as `backend` work. |
-| `--no-git`              | Do not run `git init`.                                                                                                                  |
-| `--eject-templates`     | Also copy the skill template to `.skanvil/templates/skill`.                                                                             |
-| `--no-agent-skill`      | Do not install the [`skanvil` agent skill](#install-skill-dest) into the library. By default it goes to `.claude/skills/skanvil`.       |
+| Option                  | Description                                                                                                                                             |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--name <value>`        | Library and package name, kebab-cased. Default: the folder name.                                                                                        |
+| `--scope <value>`       | npm scope (`acme` or `@acme`). The package becomes `@acme/<name>`.                                                                                      |
+| `--description <value>` | Description for the README and package.json.                                                                                                            |
+| `--profile <list>`      | README sections to create from the default preset: any of `front,back,transversal`, or `all` (default). Aliases such as `backend` work.                 |
+| `--no-git`              | Do not run `git init`.                                                                                                                                  |
+| `--eject-templates`     | Also copy the skill template to `.skanvil/templates/skill`.                                                                                             |
+| `--no-agent-skill`      | Do not install the [`skanvil` agent skill](#install-skill-dest) into the library. By default it goes to `.claude/skills/skanvil`.                       |
+| `--target <name>`       | Default sync targets written to `.skanvilrc.json`, which are also where the agent skill is installed. Repeatable or comma-separated. Default: `claude`. |
 
 ```bash
 skanvil init my-skills --scope acme --profile front,back

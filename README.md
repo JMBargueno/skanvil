@@ -48,7 +48,25 @@ Requires Node.js 20 or later.
 
 ## Quick start
 
-**Author a library:**
+**The easy way: run `npx skanvil`** with no arguments in a terminal. A wizard guides you through it:
+
+```text
+$ npx skanvil
+skanvil 1.0.0 · interactive mode · Ctrl+C to quit
+? This folder (projects) is not a skills library. What do you want to do?
+❯ Create a new skills library
+  Install skills from a library into this folder
+  Install or update the skanvil agent skill
+  Exit
+```
+
+What the wizard covers:
+
+- **Outside a library:** creating one, with your own categories if you want.
+- **Inside a library:** adding, editing, moving and deleting skills, checking and repairing the library, and installing the skills into a project or for your user. Installs show a preview before anything is written.
+- **Learning the flags:** after each action it prints the equivalent command, ready for scripts and CI.
+
+**Author a library with commands:**
 
 ```bash
 npx skanvil init my-skills --scope acme
@@ -80,6 +98,7 @@ npx skanvil sync -C ./my-skills --global --target claude,copilot
 
 | Command                        | What it does                                                                      |
 | ------------------------------ | --------------------------------------------------------------------------------- |
+| `skanvil` / `skanvil wizard`   | Interactive assistant (in a terminal; without one, `skanvil` prints the help).    |
 | `skanvil init [dir]`           | Create a new library.                                                             |
 | `skanvil add`                  | Create a skill from a template and index it (interactive if options are missing). |
 | `skanvil edit <skill>`         | Rename, re-categorise, retitle, redescribe or remove a skill. Transactional.      |

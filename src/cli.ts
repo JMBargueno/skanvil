@@ -4,7 +4,8 @@
  *
  * Defines the commands with commander and delegates to the handlers in `src/commands/`.
  * Handler errors are printed as `skanvil: <message>` and set the exit code to 1. Running without
- * arguments prints the help and exits with 1.
+ * arguments opens the interactive wizard in a terminal; elsewhere (CI, pipes) it prints the help
+ * and exits with 1.
  *
  * @module
  */
@@ -19,7 +20,9 @@ import {
   syncCommand,
   validateCommand
 } from "./commands/library.js";
+import { isInteractive } from "./commands/shared.js";
 import { addCommand, editCommand, listCommand } from "./commands/skills.js";
+import { wizardCommand } from "./commands/wizard.js";
 import { RULES } from "./core/validate.js";
 import { TARGET_PRESETS } from "./core/sync.js";
 import { packageVersion } from "./util/paths.js";
@@ -59,6 +62,11 @@ export function buildProgram(): Command {
     .showHelpAfterError("(run 'skanvil --help' for usage)");
 
   program
+    .command("wizard")
+    .description("interactive assistant (also what 'skanvil' runs without arguments in a terminal)")
+    .action(run(() => wizardCommand()));
+
+  program
     .command("init [dir]")
     .description("create a new skills library")
     .option("--name <value>", "library name (default: folder name)")
@@ -68,6 +76,11 @@ export function buildProgram(): Command {
     .option("--no-git", "skip git init")
     .option("--eject-templates", "copy the skill template into .skanvil/templates for customisation")
     .option("--no-agent-skill", "do not install the skanvil agent skill into the library")
+    .option(
+      "--target <name>",
+      "default sync targets written to .skanvilrc.json (also where the agent skill is installed); repeatable or comma-separated (default: claude)",
+      collect
+    )
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((dir, options) => initCommand(dir, options)));
@@ -192,7 +205,9 @@ export function buildProgram(): Command {
 
 const argv = process.argv.slice(2);
 const program = buildProgram();
-if (argv.length === 0) {
+if (argv.length === 0 && isInteractive()) {
+  await program.parseAsync([...process.argv, "wizard"]);
+} else if (argv.length === 0) {
   program.outputHelp();
   process.exitCode = 1;
 } else {

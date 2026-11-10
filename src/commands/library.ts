@@ -37,6 +37,8 @@ export interface InitOptions extends CommonOptions {
   ejectTemplates?: boolean;
   /** `false` with `--no-agent-skill`. */
   agentSkill?: boolean;
+  /** `--target` values: default sync targets, also used for the agent skill. */
+  target?: string[];
 }
 
 /**
@@ -56,7 +58,8 @@ export async function initCommand(dir: string | undefined, options: InitOptions)
     profile: options.profile,
     git: options.git !== false,
     ejectTemplates: options.ejectTemplates,
-    agentSkill: options.agentSkill
+    agentSkill: options.agentSkill,
+    syncTargets: splitList(options.target).length > 0 ? splitList(options.target) : undefined
   });
 
   out.info(`Created library '${result.name}' in ${displayPath(result.target)}`);
