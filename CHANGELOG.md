@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.1.1](https://github.com/JMBargueno/skanvil/compare/v1.1.0...v1.1.1) (2026-11-11)
+
+
+### Documentation
+
+* add AI agent rules and simplify the setup prompt ([315f1ad](https://github.com/JMBargueno/skanvil/commit/315f1ad171553e6aa889acad246ea2b22e5e7c98))
+
 ## [1.1.0](https://github.com/JMBargueno/skanvil/compare/v1.0.0...v1.1.0) (2026-11-11)
 
 

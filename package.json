@@ -1,6 +1,6 @@
 {
   "name": "skanvil",
-  "version": "1.1.0",
+  "version": "1.1.1",
   "description": "CLI to generate, extend, validate and sync libraries of Agent Skills.",
   "author": "Jose Manuel Bargueño López <contact@jmbargueno.com>",
   "license": "MIT",
