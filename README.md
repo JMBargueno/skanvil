@@ -67,6 +67,8 @@ What the wizard covers:
 - **Inside a library:** adding, editing, moving and deleting skills, checking and repairing the library, and installing the skills into a project or for your user. Installs show a preview before anything is written.
 - **Learning the flags:** after each action it prints the equivalent command, ready for scripts and CI.
 
+**Or let your AI agent do it:** paste the [setup prompt](docs/getting-started.md#0-let-your-ai-agent-learn-skanvil-optional) into Claude Code, Copilot or Codex. It installs the skanvil agent skill and the agent learns the tool, so you can then ask for skills in plain language.
+
 **Author a library with commands:**
 
 ```bash
