@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.1.0](https://github.com/JMBargueno/skanvil/compare/v1.0.0...v1.1.0) (2026-11-11)
+
+
+### Features
+
+* parametrized skills and typed package exports ([7f9ff65](https://github.com/JMBargueno/skanvil/commit/7f9ff659140591b5ccc56f867f831853d2573d44))
+
+
+### Documentation
+
+* add an AI agent setup prompt to getting started ([ee3adae](https://github.com/JMBargueno/skanvil/commit/ee3adae981baab3b5244b555024ac9122d47b56b))
+
 ## 1.0.0 (2026-11-10)
 
 
