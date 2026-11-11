@@ -1,5 +1,7 @@
 # Contributing
 
+Working with an AI coding agent? It picks up the project rules from [AGENTS.md](AGENTS.md) (Claude Code reads it through `CLAUDE.md`, Copilot through `.github/copilot-instructions.md`). Keep that file in sync with the conventions below.
+
 ## Setup
 
 ```bash

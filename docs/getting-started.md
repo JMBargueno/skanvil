@@ -6,49 +6,30 @@ This guide creates a skills library, adds and edits skills, checks them in CI, p
 
 ## 0. Let your AI agent learn skanvil (optional)
 
-skanvil ships an agent skill that teaches coding agents (Claude Code, GitHub Copilot, Codex…) how to use it:
+skanvil ships an agent skill, [`agent-skill/skanvil/SKILL.md`](../agent-skill/skanvil/SKILL.md), that teaches coding agents (Claude Code, GitHub Copilot, Codex…) how to use it. It covers the commands, the rules and how to fix every validation error.
 
-- the commands and the rules (never rename folders or edit the README index by hand);
-- how to fix every validation error;
-- how to write good skill content.
-
-Paste this prompt into your agent, inside the repository where you want to work. That can be an existing skills library, an application that consumes one, or an empty folder for a new library.
+Paste this into your agent, inside the repository where you want to work:
 
 ```text
-Install and learn the skanvil agent skill in this repository.
-
-1. Work out which skills folder you read: Claude Code uses .claude/skills, GitHub Copilot
-   .github/skills, Codex .agents/skills. Then run the matching command, for example:
-     npx skanvil@latest install-skill --target claude
-   Use --target copilot or --target agents (comma-separated for several) if that fits you
-   better. Do not use --global unless I ask for it.
-2. Read the installed <skills folder>/skanvil/SKILL.md completely (for example
-   .claude/skills/skanvil/SKILL.md), and then its references/REFERENCE.md.
-3. Detect the context:
-   - if there is a .skanvilrc.json, run `npx skanvil list --json` and `npx skanvil validate --json`;
-   - otherwise, tell me this is not a skills library yet.
-4. Reply with:
-   - a short summary of how you will use skanvil here;
-   - the golden rules you will follow;
-   - what the library contains and any validation problems you found.
-   Do not change any skill until I ask.
-
-From now on, whenever I ask you to create, rename, move, delete, validate, parametrize, build or
-install skills, use the skanvil skill and its commands. Do not edit skill folders or the README
-index by hand, always pass every option (the commands are interactive otherwise), and never run
-`skanvil` without arguments, because that opens a menu meant for humans.
+Install and use the skanvil skill: https://github.com/JMBargueno/skanvil/blob/main/agent-skill/skanvil/SKILL.md
+Install it with `npx skanvil@latest install-skill --target <claude|copilot|agents>`, using the
+target that matches you, then read it and follow it whenever I work with skills.
 ```
 
-After that, you can ask in plain language, and the agent will turn each request into the right commands. For example:
+The agent installs the skill into its own skills folder:
+
+- Claude Code uses `.claude/skills`;
+- Copilot uses `.github/skills`;
+- Codex uses `.agents/skills`.
+
+It then reads the skill, references included. After that you can ask in plain language. For example:
 
 - _"Create a skills library called acme-skills with categories mobile and data."_
 - _"Add a backend skill for zero-downtime database migrations and write its content."_
 - _"Make the code-review skill configurable for GitHub or Jira."_
 - _"Install the library's skills into ../my-app for Claude Code and Copilot."_
 
-The agent will then run `init`, `add`, `edit`, `validate`, `sync --param`, `build` and so on, and check the result with `skanvil validate`.
-
-`skanvil init` already installs this skill in new libraries, in `.claude/skills/skanvil` by default. Run the prompt again after upgrading skanvil, and `install-skill` will refresh the skill.
+`skanvil init` already installs this skill in new libraries, so this step is only needed in other repositories, or to refresh the skill after upgrading skanvil.
 
 ## 1. Create a library
 
