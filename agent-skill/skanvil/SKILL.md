@@ -114,6 +114,15 @@ How sync behaves:
 
 Then move existing skills with `edit --type`, and run `skanvil index`.
 
+**Parametrize a skill.** Do this when variants of a skill differ only in details, such as the tracker, package manager or URLs.
+
+1. Add a `params.json` next to its `SKILL.md`, for example `{"ticketTracker": {"type": "enum", "values": ["github", "jira"], "default": "github"}}`. Types are `enum`, `string` and `boolean`, and every parameter needs a `default`.
+2. In `SKILL.md`, use `{{ticketTracker}}`, `{{#if ticketTracker == "jira"}}…{{else}}…{{/if}}` and `{{#if strict}}…{{/if}}`.
+3. Run `npx skanvil validate`: it checks the skill rendered with the defaults, plus the `params-file` and `params-template` rules.
+4. Install it with values: `npx skanvil sync <project> --param ticketTracker=jira`.
+
+**Export skills as code.** `npx skanvil build` generates `dist/`, with one typed function per skill (`front-code-review` becomes `codeReview(params)`), plus `skills` and `getSkill(name)`. Generated libraries run it in `npm run build` and before publishing.
+
 ### 4. Write good skill content
 
 - **`description`** says _what_ the skill does and _when_ to use it, with the trigger keywords an agent would see. It must be at most 1024 characters.
@@ -125,19 +134,21 @@ Then move existing skills with `edit --type`, and run `skanvil index`.
 
 ### 5. Diagnostic → fix
 
-| Rule                                                | Fix                                                                            |
-| --------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `readme-missing`, `readme-orphan`, `readme-section` | `npx skanvil doctor --fix`                                                     |
-| `name-matches-folder`, `name-required`              | `doctor --fix`, or `edit --rename` if the folder name is wrong                 |
-| `frontmatter-tabs`, `tools-field`                   | `doctor --fix`                                                                 |
-| `frontmatter`                                       | Repair the YAML between the `---` lines (quote values containing `: ` or `#`). |
-| `required-sections`                                 | Add the missing `## Section` listed in `validation.requiredSections`.          |
-| `placeholders`                                      | Replace the placeholder text with real content.                                |
-| `description-length`, `max-lines`                   | Shorten; move detail to `references/`.                                         |
-| `metadata-format`                                   | Quote non-string values.                                                       |
-| `duplicate-name`                                    | Two folders share a `name`: rename one with `edit --rename`.                   |
-| `broken-references`                                 | Create the referenced file, or fix the link (paths are relative to the skill). |
-| `template-unchanged`                                | Rewrite the generic scaffold sentences with skill-specific instructions.       |
+| Rule                                                | Fix                                                                                  |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------ |
+| `readme-missing`, `readme-orphan`, `readme-section` | `npx skanvil doctor --fix`                                                           |
+| `name-matches-folder`, `name-required`              | `doctor --fix`, or `edit --rename` if the folder name is wrong                       |
+| `frontmatter-tabs`, `tools-field`                   | `doctor --fix`                                                                       |
+| `frontmatter`                                       | Repair the YAML between the `---` lines (quote values containing `: ` or `#`).       |
+| `required-sections`                                 | Add the missing `## Section` listed in `validation.requiredSections`.                |
+| `placeholders`                                      | Replace the placeholder text with real content.                                      |
+| `description-length`, `max-lines`                   | Shorten; move detail to `references/`.                                               |
+| `metadata-format`                                   | Quote non-string values.                                                             |
+| `duplicate-name`                                    | Two folders share a `name`: rename one with `edit --rename`.                         |
+| `broken-references`                                 | Create the referenced file, or fix the link (paths are relative to the skill).       |
+| `template-unchanged`                                | Rewrite the generic scaffold sentences with skill-specific instructions.             |
+| `params-file`                                       | Fix `params.json`: camelCase names, `type`, a `default` (inside `values` for enums). |
+| `params-template`                                   | Declare every `{{name}}` used, and balance `{{#if}}` / `{{/if}}`.                    |
 
 See [references/REFERENCE.md](references/REFERENCE.md) for every command option, the config schema and JSON output shapes.
 

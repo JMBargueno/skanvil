@@ -5,7 +5,8 @@
  * - {@link scaffoldSkill}, {@link editSkill} and {@link removeSkill} to change skills;
  * - {@link validateLibrary} to check it;
  * - {@link rebuildIndex} and {@link doctor} to maintain the README index;
- * - {@link syncSkills} to install skills into agent folders.
+ * - {@link syncSkills} to install skills into agent folders;
+ * - {@link buildLibrary} to generate a library's typed npm exports, and {@link renderTemplate} for parametrized skills.
  *
  * @example
  * ```ts
@@ -26,6 +27,7 @@ export {
   type AgentSkillResult,
   type InstallAgentSkillOptions
 } from "./core/agent-skill.js";
+export { buildLibrary, exportNames, type BuildOptions, type BuildResult, type BuiltSkill } from "./core/build.js";
 export { Categories } from "./core/categories.js";
 export {
   CONFIG_FILE,
@@ -42,6 +44,18 @@ export {
 export { doctor, type DoctorResult } from "./core/doctor.js";
 export { createLibrary, parseProfile, type CreateLibraryOptions } from "./core/init.js";
 export { Library, type SkillInfo } from "./core/library.js";
+export {
+  PARAMS_FILE,
+  findUndeclaredParams,
+  parseParamPairs,
+  parseParams,
+  readParams,
+  renderTemplate,
+  resolveParamValues,
+  type ParamDefinition,
+  type ParamDefinitions,
+  type ParamValues
+} from "./core/params.js";
 export { rebuildIndex, reconcileIndex } from "./core/reindex.js";
 export { SkillFile } from "./core/skill.js";
 export { editSkill, removeSkill, scaffoldSkill, type AddSkillOptions, type EditSkillOptions } from "./core/skills.js";

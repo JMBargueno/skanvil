@@ -134,7 +134,6 @@ If publishing fails with `ENEEDAUTH`, check:
 
 ### Before merging a release pull request
 
-- If it is a major release, bump the `skanvil` range in `templates/library/package.json` (for example `^2.0.0`) in a `fix:` or `chore:` commit first.
 - Optionally smoke-test the tarball:
   ```bash
   npm pack --pack-destination /tmp/skanvil-smoke

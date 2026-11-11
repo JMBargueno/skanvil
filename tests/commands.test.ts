@@ -42,7 +42,7 @@ describe("init", () => {
     const rc = JSON.parse(fs.readFileSync(path.join(root, CONFIG_FILE), "utf8"));
 
     expect(pkg.name).toBe("@acme/my-lib");
-    expect(pkg.devDependencies.skanvil).toBe("^1.0.0");
+    expect(pkg.devDependencies.skanvil).toBe(`^${packageVersion()}`);
     expect(rc.categories.map((category: { id: string }) => category.id)).toEqual([
       "front",
       "back",

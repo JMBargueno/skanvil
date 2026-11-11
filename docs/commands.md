@@ -176,17 +176,18 @@ Copy the built-in skill template into the library so you can edit it.
 
 Install the library's skills into a project. `dest` defaults to the current directory. See [Sync](sync.md).
 
-| Option               | Description                                                                                                                                                 |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `--target <name>`    | `claude`, `copilot`, `agents`, `codex`, or a path relative to `dest`. Repeatable and comma-separated. Default: `sync.targets` from the config, or `claude`. |
-| `--from <pkg\|path>` | Source library: a folder, or an npm package installed in a `node_modules` above `dest`. Default: `--cwd`.                                                   |
-| `--link`             | Symlink instead of copying (junctions on Windows).                                                                                                          |
-| `--copy`             | Copy, even if the config sets `sync.mode: "link"`.                                                                                                          |
-| `--category <id>`    | Only sync this category. Repeatable. Disables pruning.                                                                                                      |
-| `--skill <name>`     | Only sync this skill. Repeatable. Disables pruning.                                                                                                         |
-| `--force`            | Also sync skills that have validation errors.                                                                                                               |
-| `--dry-run`          | Show what would change without writing.                                                                                                                     |
-| `--global`           | Install into your user folders instead of a project (see below). Do not pass `dest` with it.                                                                |
+| Option                 | Description                                                                                                                                                                    |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `--target <name>`      | `claude`, `copilot`, `agents`, `codex`, or a path relative to `dest`. Repeatable and comma-separated. Default: `sync.targets` from the config, or `claude`.                    |
+| `--from <pkg\|path>`   | Source library: a folder, or an npm package installed in a `node_modules` above `dest`. Default: `--cwd`.                                                                      |
+| `--link`               | Symlink instead of copying (junctions on Windows).                                                                                                                             |
+| `--copy`               | Copy, even if the config sets `sync.mode: "link"`.                                                                                                                             |
+| `--category <id>`      | Only sync this category. Repeatable. Disables pruning.                                                                                                                         |
+| `--skill <name>`       | Only sync this skill. Repeatable. Disables pruning.                                                                                                                            |
+| `--force`              | Also sync skills that have validation errors.                                                                                                                                  |
+| `--dry-run`            | Show what would change without writing.                                                                                                                                        |
+| `--param <name=value>` | Value for [parametrized skills](params-and-exports.md). Repeatable. It applies to every synced skill that declares it, and an unknown name is an error. Remembered per target. |
+| `--global`             | Install into your user folders instead of a project (see below). Do not pass `dest` with it.                                                                                   |
 
 Custom `--target` paths must resolve to a folder inside `dest`: `../shared` or `.` are rejected before anything is written. With `--global`, only presets are accepted:
 
@@ -199,6 +200,17 @@ skanvil sync ../my-app --target claude,copilot --dry-run
 skanvil sync --from @acme/my-skills --target agents --link
 skanvil sync -C ./my-skills --global --target claude
 ```
+
+## `build`
+
+Generate the library's npm exports in `dist/`: `index.mjs`, `index.cjs` and their type declarations. They contain one function per publishable skill that returns its `SKILL.md` (rendered with parameters), a `skills` list and `getSkill(name)`. See [Parameters and exports](params-and-exports.md).
+
+| Option        | Description                                                  |
+| ------------- | ------------------------------------------------------------ |
+| `--out <dir>` | Output folder relative to the library root. Default: `dist`. |
+| `--force`     | Build even when validation reports errors.                   |
+
+`--json` prints `{ outDir, files, skills: [{ name, exportName, category, params }] }`.
 
 ## `install-skill [dest]`
 

@@ -15,6 +15,7 @@ import {
   doctorCommand,
   ejectCommand,
   indexCommand,
+  buildCommand,
   initCommand,
   installSkillCommand,
   syncCommand,
@@ -168,6 +169,15 @@ export function buildProgram(): Command {
     .action(run((options) => ejectCommand(options)));
 
   program
+    .command("build")
+    .description("generate the library's npm exports: one typed function per skill (dist/index.mjs, index.cjs, .d.ts)")
+    .option("--out <dir>", "output folder relative to the library root (default: dist)")
+    .option("--force", "build even when validation reports errors")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => buildCommand(options)));
+
+  program
     .command("install-skill [dest]")
     .description("install or update the skanvil agent skill so coding agents in a project know how to use skanvil")
     .option(
@@ -195,6 +205,7 @@ export function buildProgram(): Command {
     .option("--skill <name>", "only this skill (repeatable)", collect)
     .option("--force", "also sync skills with validation errors")
     .option("--dry-run", "show what would change without writing")
+    .option("--param <name=value>", "value for parametrized skills (repeatable); remembered per target", collect)
     .option("--global", "install into your user folders (~/.claude/skills, ~/.copilot/skills, ~/.agents/skills)")
     .addOption(cwdOption())
     .addOption(jsonOption())

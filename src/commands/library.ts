@@ -9,7 +9,9 @@
 import path from "node:path";
 
 import { installAgentSkill } from "../core/agent-skill.js";
+import { buildLibrary } from "../core/build.js";
 import { doctor } from "../core/doctor.js";
+import { parseParamPairs } from "../core/params.js";
 import { createLibrary } from "../core/init.js";
 import { rebuildIndex } from "../core/reindex.js";
 import { syncSkills, type TargetResult } from "../core/sync.js";
@@ -274,6 +276,8 @@ export interface SyncCommandOptions extends CommonOptions {
   skill?: string[];
   /** `--global`: install into the user's home folders instead of a project. */
   global?: boolean;
+  /** `--param name=value` entries (repeatable). */
+  param?: string[];
 }
 
 /** Flattens repeatable and comma-separated option values (`["a,b", "c"]` becomes `["a", "b", "c"]`). */
@@ -315,7 +319,8 @@ export async function syncCommand(dest: string | undefined, options: SyncCommand
     force: options.force,
     categories: splitList(options.category),
     skills: splitList(options.skill),
-    scope: options.global ? "user" : "project"
+    scope: options.global ? "user" : "project",
+    params: options.param?.length ? parseParamPairs(options.param) : undefined
   });
 
   if (options.json) {
@@ -333,6 +338,38 @@ export async function syncCommand(dest: string | undefined, options: SyncCommand
     for (const name of result.removed) out.print(`   - ${name}`);
     for (const entry of result.skipped) out.warn(`   skipped ${entry.skill}: ${entry.reason}`);
     for (const warning of result.warnings) out.warn(`   ${warning}`);
+  }
+  return 0;
+}
+
+/** Options of `skanvil build`. */
+export interface BuildCommandOptions extends CommonOptions {
+  /** `--out`: output folder relative to the library root. */
+  out?: string;
+  /** `--force`: build even with validation errors. */
+  force?: boolean;
+}
+
+/**
+ * `skanvil build`: generates the library's importable package (`dist/index.mjs`, `index.cjs` and
+ * their type declarations) with one function per skill.
+ *
+ * @param options - Parsed CLI options.
+ * @returns Exit code.
+ * @see {@link buildLibrary}
+ */
+export async function buildCommand(options: BuildCommandOptions): Promise<number> {
+  const library = await openLibrary(options);
+  const out = new Output("build", options.json);
+  const result = await buildLibrary(library, { outDir: options.out, force: options.force });
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+  out.success(`Built ${result.skills.length} skill(s) into ${displayPath(result.outDir)}`);
+  for (const skill of result.skills) {
+    const params = skill.params.length ? ` (params: ${skill.params.join(", ")})` : "";
+    out.print(`   ${skill.exportName}  ${skill.name}${params}`);
   }
   return 0;
 }

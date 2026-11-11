@@ -16,6 +16,7 @@ skanvil is a CLI and Node.js library for teams that maintain a shared set of age
 - **Keeps everything in sync** when you rename, re-categorise or delete a skill.
 - **Validates** every skill against the Agent Skills spec and your own conventions, locally or in CI.
 - **Installs** the skills into the folders that coding agents read (`.claude/skills`, `.github/skills`, `.agents/skills`), in any project.
+- **Adapts and exports skills.** Optional parameters (`{{ticketTracker}}`, `{{#if …}}`) make one skill fit every team, and `skanvil build` turns the library into a typed npm package: `import { codeReview } from "@acme/skills"`.
 - **Teaches agents to use it.** skanvil ships its own `skanvil` agent skill, so Claude Code, Copilot or Codex working in your library run the CLI correctly instead of editing folders and the README by hand.
 
 ## What is a skills library?
@@ -109,6 +110,7 @@ npx skanvil sync -C ./my-skills --global --target claude,copilot
 | `skanvil templates eject`      | Copy the skill template into the library to customise it.                         |
 | `skanvil sync [dest]`          | Install skills into agent folders of a project.                                   |
 | `skanvil install-skill [dest]` | Install or update the `skanvil` agent skill in a project.                         |
+| `skanvil build`                | Generate the library's typed npm exports, one function per skill.                 |
 
 Every command accepts `--json`, and every command that works on a library accepts `-C, --cwd <path>`. The [command reference](docs/commands.md) lists every option.
 
@@ -133,17 +135,18 @@ Installed copies are stamped with the skanvil version, so running the command ag
 
 ## Documentation
 
-| Guide                                      |                                                                        |
-| ------------------------------------------ | ---------------------------------------------------------------------- |
-| [Getting started](docs/getting-started.md) | Build, validate, publish and consume a library, step by step.          |
-| [Commands](docs/commands.md)               | Every command, option and exit code.                                   |
-| [Configuration](docs/configuration.md)     | `.skanvilrc.json` reference: categories, validation, templates, sync.  |
-| [Validation rules](docs/validation.md)     | Every rule, its severity and how to tune it. CI recipes.               |
-| [Templates](docs/templates.md)             | Customising the skill template per library or category.                |
-| [Sync](docs/sync.md)                       | Installing skills into Claude Code, GitHub Copilot and Codex projects. |
-| [API](docs/api.md)                         | Using skanvil from Node.js.                                            |
-| [Architecture](ARCHITECTURE.md)            | How the code is organised.                                             |
-| [Contributing](CONTRIBUTING.md)            | Development setup and conventions.                                     |
+| Guide                                                |                                                                                       |
+| ---------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| [Getting started](docs/getting-started.md)           | Build, validate, publish and consume a library, step by step.                         |
+| [Commands](docs/commands.md)                         | Every command, option and exit code.                                                  |
+| [Configuration](docs/configuration.md)               | `.skanvilrc.json` reference: categories, validation, templates, sync.                 |
+| [Validation rules](docs/validation.md)               | Every rule, its severity and how to tune it. CI recipes.                              |
+| [Templates](docs/templates.md)                       | Customising the skill template per library or category.                               |
+| [Parameters and exports](docs/params-and-exports.md) | Parametrized skills, `sync --param`, and `import { codeReview } from "@acme/skills"`. |
+| [Sync](docs/sync.md)                                 | Installing skills into Claude Code, GitHub Copilot and Codex projects.                |
+| [API](docs/api.md)                                   | Using skanvil from Node.js.                                                           |
+| [Architecture](ARCHITECTURE.md)                      | How the code is organised.                                                            |
+| [Contributing](CONTRIBUTING.md)                      | Development setup and conventions.                                                    |
 
 ## Programmatic API
 

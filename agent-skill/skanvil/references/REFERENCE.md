@@ -4,18 +4,19 @@
 
 Every command accepts `-C, --cwd <path>` (library root) and `--json`. Exit code `0` means success; `1` means an error or failed check.
 
-| Command                | Options                                                                                                                                                                                                      |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--target <preset\|path>`                                                     |
-| `add`                  | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                                          |
-| `edit <skill>`         | `--rename`, `--type`, `--title`, `--description`, `--remove`, `--yes`, `--skip-validate`                                                                                                                     |
-| `list`                 | `--category <id>`                                                                                                                                                                                            |
-| `validate`             | `--strict`, `--skill <name>`                                                                                                                                                                                 |
-| `index`                | `--check`                                                                                                                                                                                                    |
-| `doctor`               | `--fix`                                                                                                                                                                                                      |
-| `templates eject`      | `--category <id>`, `--force`                                                                                                                                                                                 |
-| `sync [dest]`          | `--target <preset\|path>` (repeatable/comma-separated, must stay inside dest), `--from <pkg\|path>`, `--link`, `--copy`, `--category`, `--skill`, `--force`, `--dry-run`, `--global` (presets only, no dest) |
-| `install-skill [dest]` | `--target <preset\|path>`, `--force`, `--global` (presets only, no dest)                                                                                                                                     |
+| Command                | Options                                                                                                                                                                                                                                                                |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--target <preset\|path>`                                                                                                               |
+| `add`                  | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                                                                                                    |
+| `edit <skill>`         | `--rename`, `--type`, `--title`, `--description`, `--remove`, `--yes`, `--skip-validate`                                                                                                                                                                               |
+| `list`                 | `--category <id>`                                                                                                                                                                                                                                                      |
+| `validate`             | `--strict`, `--skill <name>`                                                                                                                                                                                                                                           |
+| `index`                | `--check`                                                                                                                                                                                                                                                              |
+| `doctor`               | `--fix`                                                                                                                                                                                                                                                                |
+| `templates eject`      | `--category <id>`, `--force`                                                                                                                                                                                                                                           |
+| `sync [dest]`          | `--target <preset\|path>` (repeatable/comma-separated, must stay inside dest), `--from <pkg\|path>`, `--link`, `--copy`, `--category`, `--skill`, `--force`, `--dry-run`, `--global` (presets only, no dest), `--param name=value` (repeatable, remembered per target) |
+| `build`                | `--out <dir>`, `--force`                                                                                                                                                                                                                                               |
+| `install-skill [dest]` | `--target <preset\|path>`, `--force`, `--global` (presets only, no dest)                                                                                                                                                                                               |
 
 ## `.skanvilrc.json`
 
@@ -85,6 +86,31 @@ Default severity is `error` unless noted. Rules marked with `*` are fixable by `
 - `sync --json` prints `{ dryRun, mode, results: [{ target, path, added, updated, unchanged, removed, skipped: [{ skill, reason }], warnings }] }`.
 - `add --json` prints `{ skillName, title, type, target, template }`.
 - `edit --json` prints `{ skillName, previousName }`, or `{ removed }`.
+
+## Parameters (`params.json`)
+
+```json
+{
+  "ticketTracker": { "type": "enum", "values": ["github", "jira"], "default": "github", "description": "…" },
+  "packageManager": { "type": "string", "default": "npm" },
+  "strict": { "type": "boolean", "default": false }
+}
+```
+
+The syntax inside `SKILL.md`:
+
+- `{{name}}` inserts the value;
+- `{{#if name}}`, `{{#if !name}}`, `{{#if name == "v"}}` and `{{#if name != "v"}}` start a block;
+- `{{else}}` and `{{/if}}` continue and close it.
+
+A tag alone on its line removes the line.
+
+What the build generates (`skanvil build`):
+
+- `dist/index.mjs` and `index.cjs`, plus their `.d.mts` and `.d.cts` declarations;
+- one export per skill, `<camelName>(params?) => string`;
+- `skills`, an array with `{ name, category, title, description, params, render(params), files(params) }` for each skill;
+- `getSkill(name)`.
 
 ## Template variables
 

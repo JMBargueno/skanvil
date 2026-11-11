@@ -24,7 +24,9 @@ src/
 │   ├── reindex.ts         rebuildIndex (regenerate) and reconcileIndex (minimal repair)
 │   ├── doctor.ts          diagnosis and automatic fixes
 │   ├── templates.ts       {{variable}} rendering, template lookup, eject
-│   ├── sync.ts            installation into agent folders, manifest, pruning
+│   ├── sync.ts            installation into agent folders, manifest, pruning, --param rendering
+│   ├── params.ts          params.json schema, template renderer ({{name}}, {{#if}}), value checks
+│   ├── build.ts           skanvil build: typed ESM/CJS exports with the renderer embedded
 │   ├── agent-skill.ts     install/update the bundled `skanvil` agent skill
 │   ├── init.ts            createLibrary
 │   └── naming.ts          kebab-case, title case, sentences

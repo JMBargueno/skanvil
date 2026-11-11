@@ -15,30 +15,32 @@ It also runs automatically after `add` and `edit`.
 
 ## Rules
 
-| Rule                   | Default | Fixable | Checks                                                                                                       |
-| ---------------------- | ------- | ------- | ------------------------------------------------------------------------------------------------------------ |
-| `skill-file`           | error   |         | Each skill folder contains `SKILL.md`.                                                                       |
-| `frontmatter`          | error   |         | `SKILL.md` starts with valid YAML frontmatter between `---` delimiters, and it is a mapping.                 |
-| `frontmatter-tabs`     | error   | ✓       | No tab characters in the frontmatter.                                                                        |
-| `folder-name`          | error   |         | The folder name is strict kebab-case (`_` allowed as the internal prefix).                                   |
-| `name-required`        | error   | ✓       | Frontmatter `name` is present.                                                                               |
-| `name-format`          | error   |         | Spec: `name` is 1–64 characters of `a-z`, `0-9` and single hyphens, and does not start or end with a hyphen. |
-| `name-matches-folder`  | error   | ✓       | `name` equals the folder name.                                                                               |
-| `duplicate-name`       | error   |         | No two skills share a frontmatter `name`.                                                                    |
-| `description-required` | error   |         | Frontmatter `description` is present.                                                                        |
-| `description-length`   | error   |         | Spec: `description` is at most 1024 characters.                                                              |
-| `compatibility-length` | error   |         | Spec: `compatibility`, when present, is 1–500 characters.                                                    |
-| `metadata-format`      | warn    |         | Spec: `metadata` maps string keys to string values. Quote numbers: `version: "1.0"`.                         |
-| `allowed-tools-format` | warn    |         | Spec: `allowed-tools` is a space-separated string.                                                           |
-| `tools-field`          | warn    | ✓       | `tools` is not a spec field. Use `allowed-tools`.                                                            |
-| `required-sections`    | error   |         | The body contains every heading in `validation.requiredSections`.                                            |
-| `placeholders`         | error   |         | The file contains none of `validation.placeholders`.                                                         |
-| `max-lines`            | warn    |         | `SKILL.md` is at most `validation.maxLines` lines (spec recommendation: 500).                                |
-| `broken-references`    | error   |         | Relative links and `references/`, `scripts/`, `assets/` paths in `SKILL.md` exist inside the skill folder.   |
-| `template-unchanged`   | warn    |         | The body no longer contains the generic sentences of the built-in skill template.                            |
-| `readme-missing`       | error   | ✓       | Every indexed skill is listed in the README.                                                                 |
-| `readme-orphan`        | error   | ✓       | The README does not list skills that don't exist.                                                            |
-| `readme-section`       | error   | ✓       | Skills are listed under their own category's section.                                                        |
+| Rule                   | Default | Fixable | Checks                                                                                                               |
+| ---------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------- |
+| `skill-file`           | error   |         | Each skill folder contains `SKILL.md`.                                                                               |
+| `frontmatter`          | error   |         | `SKILL.md` starts with valid YAML frontmatter between `---` delimiters, and it is a mapping.                         |
+| `frontmatter-tabs`     | error   | ✓       | No tab characters in the frontmatter.                                                                                |
+| `folder-name`          | error   |         | The folder name is strict kebab-case (`_` allowed as the internal prefix).                                           |
+| `name-required`        | error   | ✓       | Frontmatter `name` is present.                                                                                       |
+| `name-format`          | error   |         | Spec: `name` is 1–64 characters of `a-z`, `0-9` and single hyphens, and does not start or end with a hyphen.         |
+| `name-matches-folder`  | error   | ✓       | `name` equals the folder name.                                                                                       |
+| `duplicate-name`       | error   |         | No two skills share a frontmatter `name`.                                                                            |
+| `description-required` | error   |         | Frontmatter `description` is present.                                                                                |
+| `description-length`   | error   |         | Spec: `description` is at most 1024 characters.                                                                      |
+| `compatibility-length` | error   |         | Spec: `compatibility`, when present, is 1–500 characters.                                                            |
+| `metadata-format`      | warn    |         | Spec: `metadata` maps string keys to string values. Quote numbers: `version: "1.0"`.                                 |
+| `allowed-tools-format` | warn    |         | Spec: `allowed-tools` is a space-separated string.                                                                   |
+| `tools-field`          | warn    | ✓       | `tools` is not a spec field. Use `allowed-tools`.                                                                    |
+| `required-sections`    | error   |         | The body contains every heading in `validation.requiredSections`.                                                    |
+| `placeholders`         | error   |         | The file contains none of `validation.placeholders`.                                                                 |
+| `max-lines`            | warn    |         | `SKILL.md` is at most `validation.maxLines` lines (spec recommendation: 500).                                        |
+| `broken-references`    | error   |         | Relative links and `references/`, `scripts/`, `assets/` paths in `SKILL.md` exist inside the skill folder.           |
+| `template-unchanged`   | warn    |         | The body no longer contains the generic sentences of the built-in skill template.                                    |
+| `params-file`          | error   |         | `params.json`, when present, is valid (camelCase names, a type, a default). See [Parameters](params-and-exports.md). |
+| `params-template`      | error   |         | `{{…}}` placeholders and `{{#if}}` blocks use declared parameters and are balanced.                                  |
+| `readme-missing`       | error   | ✓       | Every indexed skill is listed in the README.                                                                         |
+| `readme-orphan`        | error   | ✓       | The README does not list skills that don't exist.                                                                    |
+| `readme-section`       | error   | ✓       | Skills are listed under their own category's section.                                                                |
 
 **Placeholder matching:**
 

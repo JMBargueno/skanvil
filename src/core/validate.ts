@@ -11,7 +11,14 @@ import { listFiles } from "../util/fs.js";
 import type { Severity } from "./config.js";
 import type { Library } from "./library.js";
 import { escapeRegex, KEBAB_CASE_PATTERN } from "./naming.js";
-import type { SkillFile } from "./skill.js";
+import {
+  findUndeclaredParams,
+  PARAMS_FILE,
+  renderTemplate,
+  resolveParamValues,
+  type ParamDefinitions
+} from "./params.js";
+import { SkillFile } from "./skill.js";
 import { TEMPLATE_BOILERPLATE } from "./templates.js";
 
 /** Severity of a reported diagnostic (rules set to `off` report nothing). */
@@ -88,6 +95,15 @@ export const RULES: Record<string, RuleDefinition> = {
   "template-unchanged": {
     severity: "warn",
     description: "The body no longer contains the generic text of the built-in skill template."
+  },
+  "params-file": {
+    severity: "error",
+    description:
+      "params.json, when present, is valid: camelCase names, a type, and a default (in its values for enums)."
+  },
+  "params-template": {
+    severity: "error",
+    description: "{{placeholders}} and {{#if}} blocks use declared parameters and are balanced."
   },
   "readme-missing": { severity: "error", description: "Every indexed skill is listed in the README.", fixable: true },
   "readme-orphan": { severity: "error", description: "README does not reference missing skills.", fixable: true },
@@ -343,6 +359,44 @@ export function findBrokenReferences(body: string, files: Set<string>): string[]
   return problems;
 }
 
+/**
+ * Checks a skill's `params.json` and template, and renders it with the default values.
+ *
+ * @returns The rendered skill, or `null` when the skill has no parameters or cannot be rendered
+ *   (the problem is reported and the raw file is validated instead).
+ */
+async function renderForValidation(
+  library: Library,
+  folder: string,
+  raw: SkillFile,
+  collector: Collector
+): Promise<SkillFile | null> {
+  let params: ParamDefinitions | null;
+  try {
+    params = await library.readSkillParams(folder);
+  } catch (error) {
+    collector.add("params-file", (error as Error).message, folder);
+    return null;
+  }
+  if (!params) return null;
+
+  const source = raw.toLfString();
+  const undeclared = findUndeclaredParams(source, params);
+  if (undeclared.length > 0) {
+    collector.add(
+      "params-template",
+      `uses undeclared parameter(s) ${undeclared.map((name) => `{{${name}}}`).join(", ")}; declare them in ${PARAMS_FILE}`,
+      folder
+    );
+  }
+  try {
+    return SkillFile.parse(renderTemplate(source, resolveParamValues(params, {}, folder)));
+  } catch (error) {
+    collector.add("params-template", (error as Error).message, folder);
+    return null;
+  }
+}
+
 /** Result of {@link validateLibrary}. */
 export interface ValidationResult {
   /** Every finding, skill checks first and README checks last. */
@@ -404,6 +458,9 @@ export async function validateLibrary(
       collector.add("skill-file", "missing SKILL.md", folder);
       continue;
     }
+    // Parametrized skills are checked as rendered with their default values.
+    const rendered = await renderForValidation(library, folder, skill, collector);
+    if (rendered) skill = rendered;
     const files = new Set(await listFiles(library.skillPath(folder)));
     const allowUnderscore = library.categories.fromFolder(folder).prefix === "_";
     const name = validateSkillFile(collector, folder, skill, ruleOptions, allowUnderscore, files);

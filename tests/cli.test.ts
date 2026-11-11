@@ -6,6 +6,7 @@ import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { describe, expect, test } from "vitest";
 
 import { CLI_BUILD_DIR } from "./setup/build-cli.js";
@@ -161,6 +162,51 @@ describe("library workflow", () => {
     const fixed = skanvil(["doctor", "--fix", "--json"], root);
     expect(fixed.code).toBe(0);
     expect(json<{ fixes: string[] }>(fixed).fixes).toEqual(["front-a: set frontmatter name to the folder name"]);
+  });
+});
+
+describe("parametrized skills and build (bundled CLI)", () => {
+  function parametrized(): string {
+    const root = library();
+    const dir = path.join(root, "skills", "front-a");
+    fs.writeFileSync(
+      path.join(dir, "params.json"),
+      JSON.stringify({ tracker: { type: "enum", values: ["github", "jira"], default: "github" } })
+    );
+    const file = path.join(dir, "SKILL.md");
+    const section = [
+      "Track work in {{tracker}}.",
+      '{{#if tracker == "jira"}}',
+      "Use keys.",
+      "{{/if}}",
+      "",
+      "## Output Format"
+    ];
+    fs.writeFileSync(file, fs.readFileSync(file, "utf8").replace("## Output Format", section.join("\n")));
+    return root;
+  }
+
+  test("build generates importable exports from the bundled CLI", async () => {
+    const root = parametrized();
+    const run = skanvil(["build", "--json"], root);
+    expect(run.code).toBe(0);
+    expect(json<{ skills: { exportName: string; params: string[] }[] }>(run).skills).toEqual([
+      expect.objectContaining({ exportName: "a", params: ["tracker"] })
+    ]);
+    const mod = await import(pathToFileURL(path.join(root, "dist", "index.mjs")).href);
+    expect(mod.a({ tracker: "jira" })).toContain("Track work in jira.\nUse keys.\n");
+    expect(mod.a()).toContain("Track work in github.\n\n## Output Format");
+  });
+
+  test("sync --param renders installed skills and rejects unknown names", () => {
+    const root = parametrized();
+    const project = tmp();
+    expect(skanvil(["sync", project, "--param", "tracker=jira"], root).code).toBe(0);
+    const installed = fs.readFileSync(path.join(project, ".claude", "skills", "front-a", "SKILL.md"), "utf8");
+    expect(installed).toContain("Track work in jira.\nUse keys.\n");
+    const bad = skanvil(["sync", project, "--param", "nope=1"], root);
+    expect(bad.code).toBe(1);
+    expect(bad.stderr).toContain("Unknown parameter(s) nope");
   });
 });
 

@@ -7,9 +7,12 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-import { exists, hashDirectory } from "../util/fs.js";
+import { createHash } from "node:crypto";
+
+import { exists, hashDirectory, listFiles } from "../util/fs.js";
 import { packageVersion } from "../util/paths.js";
 import type { Library } from "./library.js";
+import { PARAMS_FILE, renderTemplate, resolveParamValues, type ParamDefinitions } from "./params.js";
 import { validateLibrary } from "./validate.js";
 
 /**
@@ -62,8 +65,10 @@ interface Manifest {
   version: string;
   /** Library root, relative to the target folder (posix). */
   source: string;
-  /** Installed skills: content hash of the source folder and how it was placed. */
+  /** Installed skills: content hash of the installed files and how they were placed. */
   skills: Record<string, { hash: string; mode: "copy" | "link" }>;
+  /** Parameter values used for this target, reused by the next sync when none are given. */
+  params?: Record<string, string | boolean>;
 }
 
 /** Options of {@link syncSkills}. */
@@ -86,6 +91,12 @@ export interface SyncOptions {
   scope?: TargetScope;
   /** Home folder for the `user` scope. @defaultValue `os.homedir()` */
   homeDir?: string;
+  /**
+   * Values for parametrized skills (`params.json`), applied to every skill that declares them.
+   * When omitted, each target reuses the values of its previous sync, then the defaults.
+   * Every key must be declared by at least one synced skill.
+   */
+  params?: Record<string, string | boolean>;
 }
 
 /** Outcome of {@link syncSkills} for one target. */
@@ -106,6 +117,8 @@ export interface TargetResult {
   skipped: { skill: string; reason: string }[];
   /** Non-fatal problems, such as a link that fell back to a copy. */
   warnings: string[];
+  /** Parameter values used for this target (empty when no synced skill has parameters). */
+  params: Record<string, string | boolean>;
 }
 
 /**
@@ -184,10 +197,13 @@ async function place(
   source: string,
   target: string,
   mode: "copy" | "link",
-  warnings: string[]
+  warnings: string[],
+  rendered: string | null
 ): Promise<"copy" | "link"> {
   await fs.rm(target, { recursive: true, force: true });
-  if (mode === "link") {
+  if (mode === "link" && rendered !== null) {
+    warnings.push(`${path.basename(target)} has parameters, so it was copied rendered instead of linked`);
+  } else if (mode === "link") {
     try {
       // Junctions need no admin rights / Developer Mode on Windows.
       await fs.symlink(source, target, process.platform === "win32" ? "junction" : "dir");
@@ -197,7 +213,43 @@ async function place(
     }
   }
   await fs.cp(source, target, { recursive: true });
+  if (rendered !== null) {
+    await fs.writeFile(path.join(target, "SKILL.md"), rendered, "utf8");
+    await fs.rm(path.join(target, PARAMS_FILE), { force: true });
+  }
   return "copy";
+}
+
+/** What would be installed for one skill: its content hash and, when parametrized, the rendered SKILL.md. */
+interface Materialized {
+  hash: string;
+  rendered: string | null;
+}
+
+/**
+ * Computes the installed form of a skill. Parametrized skills get their `SKILL.md` rendered and
+ * lose `params.json`; other skills are hashed exactly like before parameters existed.
+ */
+async function materialize(
+  library: Library,
+  name: string,
+  definitions: ParamDefinitions | null,
+  values: Record<string, string | boolean>
+): Promise<Materialized> {
+  const dir = library.skillPath(name);
+  if (!definitions) return { hash: await hashDirectory(dir), rendered: null };
+
+  const raw = await fs.readFile(path.join(dir, "SKILL.md"), "utf8");
+  const rendered = renderTemplate(raw, resolveParamValues(definitions, values, name, true));
+  const hash = createHash("sha256");
+  for (const file of await listFiles(dir)) {
+    if (file === PARAMS_FILE) continue;
+    hash.update(file);
+    hash.update(" ");
+    hash.update(file === "SKILL.md" ? Buffer.from(rendered, "utf8") : await fs.readFile(path.join(dir, file)));
+    hash.update(" ");
+  }
+  return { hash: hash.digest("hex").slice(0, 16), rendered };
 }
 
 /**
@@ -264,18 +316,39 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
     }
   }
 
-  const hashes = new Map<string, string>();
-  for (const name of candidates) hashes.set(name, await hashDirectory(library.skillPath(name)));
+  const definitions = new Map<string, ParamDefinitions | null>();
+  for (const name of candidates) definitions.set(name, await library.readSkillParams(name));
+  const declared = new Set([...definitions.values()].flatMap((defs) => Object.keys(defs ?? {})));
+  if (options.params) {
+    const unknown = Object.keys(options.params).filter((key) => !declared.has(key));
+    if (unknown.length > 0) {
+      throw new Error(
+        `Unknown parameter(s) ${unknown.join(", ")}: no synced skill declares them` +
+          (declared.size ? ` (declared: ${[...declared].join(", ")})` : " (no synced skill has parameters)")
+      );
+    }
+  }
 
-  // Resolve every target first, so an invalid one fails before anything is written.
-  const dirs = options.targets.map((target) =>
-    resolveTarget(options.dest, target, { scope: options.scope, homeDir: options.homeDir })
-  );
+  // Resolve every target, its parameter values and the content to install before writing anything,
+  // so an invalid target or value fails without partial writes.
+  const cache = new Map<string, Materialized>();
+  const plans = [];
+  for (const target of options.targets) {
+    const dir = resolveTarget(options.dest, target, { scope: options.scope, homeDir: options.homeDir });
+    const manifest = (await readManifest(dir)) ?? { tool: "skanvil" as const, version: "", source: "", skills: {} };
+    const remembered = Object.fromEntries(Object.entries(manifest.params ?? {}).filter(([key]) => declared.has(key)));
+    const values = options.params ?? remembered;
+    const items = new Map<string, Materialized>();
+    for (const name of candidates) {
+      const key = `${name} ${JSON.stringify(values)}`;
+      if (!cache.has(key)) cache.set(key, await materialize(library, name, definitions.get(name) ?? null, values));
+      items.set(name, cache.get(key)!);
+    }
+    plans.push({ target, dir, manifest, values, items });
+  }
 
   const results: TargetResult[] = [];
-  for (const [index, target] of options.targets.entries()) {
-    const dir = dirs[index];
-    const manifest = (await readManifest(dir)) ?? { tool: "skanvil", version: "", source: "", skills: {} };
+  for (const { target, dir, manifest, values, items } of plans) {
     const result: TargetResult = {
       target,
       path: dir,
@@ -284,14 +357,16 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
       unchanged: [],
       removed: [],
       skipped: [...skipped],
-      warnings: []
+      warnings: [],
+      params: declared.size ? values : {}
     };
     const next: Manifest = {
       tool: "skanvil",
       version: packageVersion(),
       // Relative, so a committed manifest does not change from machine to machine.
       source: path.relative(dir, library.root).split(path.sep).join("/"),
-      skills: filtered ? { ...manifest.skills } : {}
+      skills: filtered ? { ...manifest.skills } : {},
+      ...(declared.size && Object.keys(values).length ? { params: values } : {})
     };
 
     if (!options.dryRun) await fs.mkdir(dir, { recursive: true });
@@ -300,7 +375,7 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
       const destination = path.join(dir, name);
       const previous = manifest.skills[name];
       const present = await exists(destination);
-      const hash = hashes.get(name)!;
+      const { hash, rendered } = items.get(name)!;
 
       if (present && !previous) {
         result.skipped.push({ skill: name, reason: `${destination} exists and is not managed by skanvil` });
@@ -314,7 +389,7 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
       (present ? result.updated : result.added).push(name);
       const actualMode = options.dryRun
         ? mode
-        : await place(library.skillPath(name), destination, mode, result.warnings);
+        : await place(library.skillPath(name), destination, mode, result.warnings, rendered);
       next.skills[name] = { hash, mode: actualMode };
     }
 

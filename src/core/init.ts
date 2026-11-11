@@ -23,6 +23,7 @@ import {
 import { Library } from "./library.js";
 import { toKebabCase, toTitleCase } from "./naming.js";
 import { buildSections } from "./readme-index.js";
+import { packageVersion } from "../util/paths.js";
 import { resolveTarget } from "./sync.js";
 import { builtinTemplate, copyTemplateDir, ejectSkillTemplate } from "./templates.js";
 
@@ -160,7 +161,8 @@ export async function createLibrary(target: string, options: CreateLibraryOption
       packageName: scope ? `@${scope}/${name}` : name,
       title,
       description,
-      sections: buildSections(sectionTitles)
+      sections: buildSections(sectionTitles),
+      skanvilRange: `^${packageVersion()}`
     }
   });
 

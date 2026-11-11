@@ -11,6 +11,7 @@ import { exists } from "../util/fs.js";
 import { Categories } from "./categories.js";
 import { loadConfig, resolveConfig, type Category, type ResolvedConfig } from "./config.js";
 import { toTitleCase } from "./naming.js";
+import { readParams, renderTemplate, resolveParamValues, type ParamDefinitions } from "./params.js";
 import { getEntry, parseIndex } from "./readme-index.js";
 import { SkillFile } from "./skill.js";
 
@@ -163,6 +164,34 @@ export class Library {
   }
 
   /**
+   * Reads a skill's parameter definitions (`params.json`).
+   *
+   * @param name - Skill folder name.
+   * @returns The definitions, or `null` when the skill has none.
+   * @throws Error when `params.json` exists but is invalid.
+   */
+  async readSkillParams(name: string): Promise<ParamDefinitions | null> {
+    return readParams(this.skillPath(name));
+  }
+
+  /**
+   * Reads a skill's `SKILL.md` rendered with parameter values. Skills without `params.json` are
+   * returned as they are.
+   *
+   * @param name - Skill folder name.
+   * @param values - Parameter values; missing ones take their defaults. @defaultValue `{}`
+   * @returns The rendered file.
+   * @throws Error when the file cannot be read, `params.json` is invalid, a value is invalid, or
+   *   the template is malformed.
+   */
+  async readSkillRendered(name: string, values: Record<string, unknown> = {}): Promise<SkillFile> {
+    const text = await fs.readFile(this.skillFilePath(name), "utf8");
+    const params = await this.readSkillParams(name);
+    if (!params) return SkillFile.parse(text);
+    return SkillFile.parse(renderTemplate(text, resolveParamValues(params, values, name)));
+  }
+
+  /**
    * Writes a skill's `SKILL.md`, keeping the line ending it was read with.
    *
    * @param name - Skill folder name.
@@ -245,7 +274,8 @@ export class Library {
     let title = "";
     let description = "";
     try {
-      const skill = await this.readSkill(name);
+      // Rendered with default parameter values, so the README never shows {{placeholders}}.
+      const skill = await this.readSkillRendered(name).catch(() => this.readSkill(name));
       title = skill.title;
       description = skill.getString("description");
     } catch {

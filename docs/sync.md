@@ -62,6 +62,10 @@ skanvil sync --from @acme/my-skills --target copilot     # an installed npm pack
 - Skills with validation errors are skipped, with a message, unless `--force` is given. README-only problems do not block a skill.
 - `--category` and `--skill` restrict the selection. Both are repeatable.
 
+## Parameters
+
+Skills with a `params.json` are installed rendered: `--param name=value` sets values, and defaults fill the rest. The values are remembered per target, so later syncs reuse them. See [Parameters and exports](params-and-exports.md).
+
 ## Copy or link
 
 | Mode           | How                                                                                     | When to use                                                                 |
