@@ -1,5 +1,16 @@
 # Changelog
 
+## [2.0.0](https://github.com/JMBargueno/skanvil/compare/v1.1.1...v2.0.0) (2026-11-25)
+
+
+### ⚠ BREAKING CHANGES
+
+* validation.requiredSections now includes "Error Recovery" by default. Existing v1.x libraries can configure validation.requiredSections explicitly in .skanvilrc.json or run "skanvil doctor --fix --scaffold-sections" to migrate.
+
+### Features
+
+* add quality lint, evals, feedback loop, multi-library sync, import and diff ([c536db5](https://github.com/JMBargueno/skanvil/commit/c536db56ba43268fc62e202d73607fbd1710a93c))
+
 ## [1.1.1](https://github.com/JMBargueno/skanvil/compare/v1.1.0...v1.1.1) (2026-11-11)
 
 
