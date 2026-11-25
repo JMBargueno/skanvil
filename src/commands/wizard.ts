@@ -14,17 +14,25 @@ import { checkbox, confirm, input, select } from "@inquirer/prompts";
 import pc from "picocolors";
 
 import { installAgentSkill } from "../core/agent-skill.js";
-import { resolveConfig, type RawCategory } from "../core/config.js";
+import { resolveConfig, SKILL_STATUSES, type RawCategory } from "../core/config.js";
 import { doctor } from "../core/doctor.js";
 import { createLibrary } from "../core/init.js";
 import { Library } from "../core/library.js";
 import { toKebabCase, toTitleCase } from "../core/naming.js";
 import { editSkill, removeSkill, scaffoldSkill } from "../core/skills.js";
-import { resolveSource, syncSkills, type TargetResult, type TargetScope } from "../core/sync.js";
+import {
+  resolveSourceHandle,
+  syncSkills,
+  type ResolvedSourceHandle,
+  type TargetResult,
+  type TargetScope
+} from "../core/sync.js";
 import { validateLibrary } from "../core/validate.js";
 import { exists, isEmptyOrMissing } from "../util/fs.js";
 import { Output } from "../util/output.js";
 import { displayPath, packageVersion } from "../util/paths.js";
+import { evalTriggersCommand } from "./evals.js";
+import { statsCommand } from "./library.js";
 import { isInteractive, printValidation } from "./shared.js";
 import { collectSkills, listCommand } from "./skills.js";
 
@@ -45,7 +53,11 @@ interface State {
 const AGENT_CHOICES = [
   { value: "claude", project: ".claude/skills", user: "~/.claude/skills", label: "Claude Code" },
   { value: "copilot", project: ".github/skills", user: "~/.copilot/skills", label: "GitHub Copilot" },
-  { value: "agents", project: ".agents/skills", user: "~/.agents/skills", label: "Codex and other agents" }
+  { value: "agents", project: ".agents/skills", user: "~/.agents/skills", label: "Codex and other agents" },
+  { value: "cursor", project: ".cursor/skills", user: "~/.cursor/skills", label: "Cursor" },
+  { value: "opencode", project: ".opencode/skills", user: "~/.config/opencode/skills", label: "OpenCode" },
+  { value: "windsurf", project: ".windsurf/skills", user: "~/.codeium/windsurf/skills", label: "Windsurf" },
+  { value: "gemini", project: ".gemini/skills", user: "~/.gemini/skills", label: "Gemini CLI" }
 ] as const;
 
 const DEFAULT_PROFILE = ["front", "back", "transversal"] as const;
@@ -218,6 +230,12 @@ async function createLibraryFlow(state: State): Promise<void> {
     message: "Install the skanvil agent skill so those agents can manage the library for you?",
     default: true
   });
+  const feedbackSkill = agentSkill
+    ? await confirm({
+        message: "Also install skanvil-feedback so agents log skill friction reports?",
+        default: true
+      })
+    : false;
   const git = await confirm({ message: "Initialise a git repository?", default: true });
 
   const result = await createLibrary(target, {
@@ -228,12 +246,13 @@ async function createLibraryFlow(state: State): Promise<void> {
     categories,
     syncTargets: targets,
     agentSkill,
+    feedbackSkill,
     git
   });
 
   console.log(pc.green(`\n✔ Created library '${result.name}' in ${displayPath(result.target)}`));
   for (const installed of result.agentSkill) {
-    console.log(pc.green(`✔ Installed the skanvil agent skill in ${displayPath(installed.path)}`));
+    console.log(pc.green(`✔ Installed the ${installed.skill} agent skill in ${displayPath(installed.path)}`));
   }
   const args = ["init", displayPath(target)];
   if (name !== toKebabCase(path.basename(target))) args.push("--name", name);
@@ -242,6 +261,7 @@ async function createLibraryFlow(state: State): Promise<void> {
   if (profile && profile.length < DEFAULT_PROFILE.length) args.push("--profile", profile.join(","));
   if (targets.join(",") !== "claude") args.push("--target", targets.join(","));
   if (!agentSkill) args.push("--no-agent-skill");
+  else if (!feedbackSkill) args.push("--no-feedback");
   if (!git) args.push("--no-git");
   showCommand(args);
   if (categories)
@@ -380,6 +400,9 @@ async function editSkillFlow(library: Library): Promise<void> {
       { value: "move", name: "Move it to another category" },
       { value: "title", name: "Change its title" },
       { value: "description", name: "Change its description" },
+      { value: "owner", name: "Set owner (metadata.owner)" },
+      { value: "status", name: "Change lifecycle status" },
+      { value: "deprecate", name: "Deprecate and set replacement skill" },
       { value: "remove", name: pc.red("Delete it") }
     ]
   });
@@ -393,8 +416,17 @@ async function editSkillFlow(library: Library): Promise<void> {
     return;
   }
 
-  const options: { rename?: string; type?: string; title?: string; description?: string } = {};
+  const options: {
+    rename?: string;
+    type?: string;
+    title?: string;
+    description?: string;
+    owner?: string;
+    status?: string;
+    replacedBy?: string;
+  } = {};
   let flag: string;
+  let cliValue: string;
   if (action === "rename") {
     flag = "--rename";
     options.rename = await input({
@@ -402,6 +434,7 @@ async function editSkillFlow(library: Library): Promise<void> {
       default: library.categories.stripPrefix(skill),
       required: true
     });
+    cliValue = options.rename;
   } else if (action === "move") {
     flag = "--type";
     options.type = await select({
@@ -413,23 +446,77 @@ async function editSkillFlow(library: Library): Promise<void> {
           name: `${category.title} ${pc.dim(category.prefix || "(no prefix)")}`
         }))
     });
+    cliValue = options.type;
   } else if (action === "title") {
     flag = "--title";
     options.title = await input({ message: "New title", default: (await library.describeSkill(skill)).title });
-  } else {
+    cliValue = options.title;
+  } else if (action === "description") {
     flag = "--description";
     options.description = await input({
       message: "New description",
       default: (await library.describeSkill(skill)).description,
       required: true
     });
+    cliValue = options.description;
+  } else if (action === "owner") {
+    flag = "--owner";
+    const parsed = await library.readSkill(skill).catch(() => null);
+    options.owner = await input({
+      message: "Owner (metadata.owner)",
+      default: parsed?.getString("metadata", "owner") || undefined,
+      required: true
+    });
+    cliValue = options.owner;
+  } else if (action === "status") {
+    flag = "--status";
+    const parsed = await library.readSkill(skill).catch(() => null);
+    const currentStatus = parsed?.getString("metadata", "status");
+    options.status = await select({
+      message: "Lifecycle status",
+      default: (SKILL_STATUSES as readonly string[]).includes(currentStatus ?? "") ? currentStatus : undefined,
+      choices: SKILL_STATUSES.map((status) => ({ value: status, name: status }))
+    });
+    cliValue = options.status;
+  } else {
+    const candidates = (await collectSkills(library)).filter(
+      (entry) =>
+        entry.name !== skill && library.categories.fromFolder(entry.name).validated && entry.status !== "deprecated"
+    );
+    if (candidates.length === 0) {
+      console.log(pc.dim("  No other active publishable skill available; marking deprecated without replacement."));
+      flag = "--status";
+      options.status = "deprecated";
+      cliValue = "deprecated";
+    } else {
+      const replacement = await select({
+        message: "Replacement skill",
+        choices: [
+          ...candidates.map((entry) => ({
+            value: entry.name,
+            name: `${entry.name} ${pc.dim(`(${entry.type})`)}`,
+            description: entry.description || undefined
+          })),
+          { value: "", name: "None (mark deprecated without replacement)" }
+        ]
+      });
+      if (replacement) {
+        flag = "--replaced-by";
+        options.replacedBy = replacement;
+        cliValue = replacement;
+      } else {
+        flag = "--status";
+        options.status = "deprecated";
+        cliValue = "deprecated";
+      }
+    }
   }
 
   const result = await editSkill(library, skill, options);
   const arrow = result.skillName !== skill ? ` → ${result.skillName}` : "";
   console.log(pc.green(`\n✔ Updated ${skill}${arrow}`));
   printValidation(new Output("edit"), await validateLibrary(library));
-  showCommand(["edit", skill, ...cwdArgs(library), flag, String(Object.values(options)[0])]);
+  showCommand(["edit", skill, ...cwdArgs(library), flag, cliValue]);
 }
 
 async function checkFlow(library: Library): Promise<void> {
@@ -470,7 +557,12 @@ function summarise(results: TargetResult[]): number {
 }
 
 /** Shared by the "sync" actions: asks where, previews with a dry run, then applies. */
-async function syncFlow(library: Library, state: State, from?: string): Promise<void> {
+async function syncFlow(
+  library: Library,
+  state: State,
+  sourceMeta: { from?: string; sourceLabel?: string; forbidLinkReason?: string } = {}
+): Promise<void> {
+  const { from, sourceLabel, forbidLinkReason } = sourceMeta;
   const where = await select({
     message: "Install the skills where?",
     choices: [
@@ -493,7 +585,14 @@ async function syncFlow(library: Library, state: State, from?: string): Promise<
   const configured = library.config.sync.targets.filter((target) => AGENT_CHOICES.some((c) => c.value === target));
   const targets = await promptTargets("For which agents?", scope, configured.length ? configured : ["claude"]);
 
-  const preview = await syncSkills(library, { dest, targets, scope, dryRun: true });
+  const preview = await syncSkills(library, {
+    dest,
+    targets,
+    scope,
+    dryRun: true,
+    sourceLabel,
+    forbidLinkReason
+  });
   console.log(pc.dim("\n  Preview:"));
   if (summarise(preview) === 0) {
     console.log(pc.green("\n✔ Everything is already up to date."));
@@ -501,7 +600,7 @@ async function syncFlow(library: Library, state: State, from?: string): Promise<
   }
   if (!(await confirm({ message: "Apply these changes?", default: true }))) return;
 
-  await syncSkills(library, { dest, targets, scope });
+  await syncSkills(library, { dest, targets, scope, sourceLabel, forbidLinkReason });
   console.log(pc.green("\n✔ Skills installed."));
 
   const args = ["sync"];
@@ -515,20 +614,39 @@ async function syncFlow(library: Library, state: State, from?: string): Promise<
 
 async function syncFromFlow(state: State): Promise<void> {
   heading("Install skills from a library into this folder");
-  const from = await input({
-    message: "Library folder or installed npm package (e.g. ../my-skills or @acme/my-skills)",
-    required: true,
-    validate: async (value) => {
-      try {
-        await Library.open(await resolveSource(value, state.cwd));
-        return true;
-      } catch (error) {
-        return (error as Error).message;
+  let cachedHandle: ResolvedSourceHandle | null = null;
+  try {
+    const from = await input({
+      message: "Library folder, installed npm package, or Git URL (e.g. ../my-skills, @acme/skills, github:org/repo)",
+      required: true,
+      validate: async (value) => {
+        try {
+          const candidate = await resolveSourceHandle(value, state.cwd);
+          try {
+            await Library.open(candidate.root);
+          } catch (error) {
+            await candidate.cleanup();
+            throw error;
+          }
+          if (cachedHandle) await cachedHandle.cleanup();
+          cachedHandle = candidate;
+          return true;
+        } catch (error) {
+          return (error as Error).message;
+        }
       }
-    }
-  });
-  const library = await Library.open(await resolveSource(from, state.cwd));
-  await syncFlow(library, state, from);
+    });
+    const active = cachedHandle ?? (await resolveSourceHandle(from, state.cwd));
+    cachedHandle = active;
+    const library = await Library.open(active.root);
+    await syncFlow(library, state, {
+      from,
+      sourceLabel: active.sourceLabel,
+      forbidLinkReason: active.isTemporary ? "temporary Git source cannot be linked; copied instead" : undefined
+    });
+  } finally {
+    if (cachedHandle) await cachedHandle.cleanup();
+  }
 }
 
 async function agentSkillFlow(state: State): Promise<void> {
@@ -543,20 +661,24 @@ async function agentSkillFlow(state: State): Promise<void> {
   });
   const scope: TargetScope = where === "user" ? "user" : "project";
   const targets = await promptTargets("For which agents?", scope, ["claude"]);
+  const includeFeedback = await confirm({
+    message: "Also install skanvil-feedback so agents log skill friction reports?",
+    default: true
+  });
 
-  let results = await installAgentSkill({ dest: state.cwd, targets, scope });
+  let results = await installAgentSkill({ dest: state.cwd, targets, scope, includeFeedback });
   const skipped = results.filter((result) => result.status === "skipped");
   if (
     skipped.length > 0 &&
     (await confirm({
-      message: `${skipped.map((result) => displayPath(result.path)).join(", ")} already contains a 'skanvil' skill that skanvil did not install. Replace it?`,
+      message: `${skipped.map((result) => displayPath(result.path)).join(", ")} already contains a skill folder that skanvil did not install. Replace it?`,
       default: false
     }))
   ) {
-    results = await installAgentSkill({ dest: state.cwd, targets, scope, force: true });
+    results = await installAgentSkill({ dest: state.cwd, targets, scope, includeFeedback, force: true });
   }
   for (const result of results) {
-    const line = `${result.target}: ${result.status} ${displayPath(result.path)}`;
+    const line = `${result.target} (${result.skill}): ${result.status} ${displayPath(result.path)}`;
     console.log(result.status === "skipped" ? pc.yellow(`  ${line}`) : pc.green(`  ✔ ${line}`));
   }
 
@@ -564,6 +686,7 @@ async function agentSkillFlow(state: State): Promise<void> {
   if (scope === "user") args.push("--global");
   else if (path.resolve(process.cwd()) !== state.cwd) args.push(displayPath(state.cwd));
   args.push("--target", targets.join(","));
+  if (!includeFeedback) args.push("--no-feedback");
   showCommand(args);
 }
 
@@ -608,6 +731,8 @@ export async function wizardCommand(options: WizardOptions = {}): Promise<number
             },
             { value: "list", name: "List skills" },
             { value: "check", name: "Check the library (validate and repair)" },
+            { value: "stats", name: "Inspect token budgets (stats)" },
+            { value: "eval", name: "Check trigger routing (eval triggers)" },
             { value: "sync", name: "Install the skills into a project or for my user" },
             { value: "agent", name: "Install or update the skanvil agent skill" },
             { value: "exit", name: "Exit" }
@@ -638,7 +763,15 @@ export async function wizardCommand(options: WizardOptions = {}): Promise<number
         else if (library && action === "edit") await editSkillFlow(library);
         else if (library && action === "list") await listCommand({ cwd: library.root });
         else if (library && action === "check") await checkFlow(library);
-        else if (library && action === "sync") {
+        else if (library && action === "stats") {
+          heading("Token and size budgets");
+          await statsCommand({ cwd: library.root });
+          showCommand(["stats", ...cwdArgs(library)]);
+        } else if (library && action === "eval") {
+          heading("Trigger routing check");
+          await evalTriggersCommand({ cwd: library.root });
+          showCommand(["eval", "triggers", ...cwdArgs(library)]);
+        } else if (library && action === "sync") {
           heading("Install the skills");
           await syncFlow(library, state);
         }

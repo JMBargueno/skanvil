@@ -43,7 +43,9 @@ npm install
 
 ```text
 my-skills/
-├── .claude/skills/skanvil/       # the skanvil agent skill: teaches agents this workflow
+├── .claude/skills/
+│   ├── skanvil/                  # the skanvil agent skill: teaches agents this workflow
+│   └── skanvil-feedback/         # logs skill friction into .skanvil-feedback.jsonl
 ├── .github/
 │   ├── copilot-instructions.md   # tells agents how to work in this repo
 │   └── workflows/skills.yml      # CI: validate + index check
@@ -55,7 +57,7 @@ my-skills/
 └── package.json                  # @acme/my-skills, with skanvil scripts
 ```
 
-The `skanvil` agent skill lets you delegate the work to an agent. Ask Claude Code or Copilot to "add a backend skill for database migrations" and the agent will run `skanvil add`, write the content and validate it, without creating folders by hand. Use `--no-agent-skill` to skip it, or `skanvil install-skill --target copilot,agents` to add it for more agents.
+The `skanvil` agent skill lets you delegate the work to an agent. Ask Claude Code or Copilot to "add a backend skill for database migrations" and the agent will run `skanvil add`, write the content and validate it, without creating folders by hand. Use `--no-agent-skill` to skip both bundled skills, `--no-feedback` to skip `skanvil-feedback`, or `skanvil install-skill --target copilot,agents` to add them for more agents.
 
 Useful `init` options:
 
@@ -69,7 +71,7 @@ If the default categories (`front-`, `back-`, transversal, `_internal`) don't fi
 
 ```bash
 npx skanvil add --type front --name "API review" \
-  --description "Reviews API integration changes for error handling, typing and retries."
+  --description "Reviews API integration changes for error handling, typing and retries. Use when modifying HTTP clients."
 ```
 
 This:
@@ -81,14 +83,15 @@ This:
 
 Run `npx skanvil add` with no options in a terminal to be prompted for the category, name, title and description.
 
-Then write the actual instructions. Open `skills/front-api-review/SKILL.md`, replace the generic steps, and move long material into `references/`. The default required sections are `Objective`, `When to Activate This Skill`, `Instructions`, `Output Format` and `Quality Criteria`.
+Then write the actual instructions. Open `skills/front-api-review/SKILL.md`, replace the generic steps and `Error Recovery` scaffold row, and move long material into `references/`. The default required sections are `Objective`, `When to Activate This Skill`, `Instructions`, `Error Recovery`, `Output Format` and `Quality Criteria`.
 
-## 3. Rename, re-categorise, delete
+## 3. Rename, re-categorise, deprecate, delete
 
 ```bash
 npx skanvil edit front-api-review --rename http-review        # front-http-review
 npx skanvil edit front-http-review --type back                # back-http-review, moved to "Backend"
-npx skanvil edit back-http-review --title "HTTP Review" --description "Reviews HTTP clients."
+npx skanvil edit back-http-review --title "HTTP Review" --owner "@backend-platform" --status active
+npx skanvil edit back-legacy-review --status deprecated --replaced-by back-http-review
 npx skanvil edit back-http-review --remove                    # asks for confirmation (--yes to skip)
 ```
 
@@ -97,10 +100,12 @@ npx skanvil edit back-http-review --remove                    # asks for confirm
 ## 4. Check the library
 
 ```bash
-npx skanvil list               # overview
-npx skanvil validate           # errors fail; warnings are reported
-npx skanvil validate --strict  # warnings fail too
-npx skanvil doctor --fix       # repair what can be repaired automatically
+npx skanvil list                    # overview (with status & owner)
+npx skanvil stats --sort tokens     # 3-stage token and line budgets
+npx skanvil eval triggers --strict  # check evals.json routing offline
+npx skanvil validate                # errors fail; warnings are reported
+npx skanvil validate --strict       # warnings fail too
+npx skanvil doctor --fix            # repair what can be repaired automatically
 ```
 
 The generated `package.json` wires these into npm:
@@ -151,5 +156,6 @@ npx skanvil install-skill --target claude,copilot
 ## Next steps
 
 - [Configuration](configuration.md): define your own categories.
+- [Evals and quality](evals-and-quality.md): measure token budgets, lint skill quality, test triggers and export evals.
 - [Templates](templates.md): give every new skill your house style.
 - [API](api.md): automate with Node.js.

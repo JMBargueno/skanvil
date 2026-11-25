@@ -10,6 +10,7 @@ import { fromLf, splitEol, type Eol } from "../util/eol.js";
 import { exists } from "../util/fs.js";
 import { Categories } from "./categories.js";
 import { loadConfig, resolveConfig, type Category, type ResolvedConfig } from "./config.js";
+import { readEvals, type SkillEvals } from "./evals.js";
 import { toTitleCase } from "./naming.js";
 import { readParams, renderTemplate, resolveParamValues, type ParamDefinitions } from "./params.js";
 import { getEntry, parseIndex } from "./readme-index.js";
@@ -172,6 +173,17 @@ export class Library {
    */
   async readSkillParams(name: string): Promise<ParamDefinitions | null> {
     return readParams(this.skillPath(name));
+  }
+
+  /**
+   * Reads a skill's evaluation suite (`evals.json`).
+   *
+   * @param name - Skill folder name.
+   * @returns The parsed evaluations, or `null` when the skill has none.
+   * @throws Error when `evals.json` exists but is invalid.
+   */
+  async readSkillEvals(name: string): Promise<SkillEvals | null> {
+    return readEvals(this.skillPath(name));
   }
 
   /**

@@ -1,7 +1,10 @@
+import os from "node:os";
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 
 import { Categories } from "../src/core/categories.js";
 import { resolveConfig } from "../src/core/config.js";
+import { parseEvals } from "../src/core/evals.js";
 import { toKebabCase } from "../src/core/naming.js";
 import {
   buildEntry,
@@ -13,7 +16,15 @@ import {
   setSection
 } from "../src/core/readme-index.js";
 import { SkillFile } from "../src/core/skill.js";
-import { placeholderPattern } from "../src/core/validate.js";
+import { parseGitSource, resolveTarget } from "../src/core/sync.js";
+import {
+  estimateTokens,
+  extractSection,
+  jaccardSimilarity,
+  stripFencedCode,
+  tokenizeForSimilarity
+} from "../src/core/text.js";
+import { findUnusedResources, placeholderPattern } from "../src/core/validate.js";
 
 const README = [
   "# Lib",
@@ -161,4 +172,186 @@ test("placeholder patterns", () => {
   expect(placeholderPattern("TODO").test("todos")).toBe(false);
   expect(placeholderPattern("tbd").test("It is TBD.")).toBe(true);
   expect(placeholderPattern("describe...").test("Describe... here")).toBe(true);
+});
+
+describe("text, token and similarity helpers", () => {
+  test("estimateTokens approximates ~4 chars per token and ignores blank text", () => {
+    expect(estimateTokens("")).toBe(0);
+    expect(estimateTokens("   \n  ")).toBe(0);
+    expect(estimateTokens("abcd")).toBe(1);
+    expect(estimateTokens("abcde")).toBe(2);
+  });
+
+  test("stripFencedCode removes backtick and tilde fences cleanly", () => {
+    const md = [
+      "Before.",
+      "```ts",
+      "## Fake Heading",
+      "try again",
+      "```",
+      "Middle.",
+      "~~~",
+      "inside tilde",
+      "~~~",
+      "After."
+    ].join("\n");
+    expect(stripFencedCode(md)).toBe("Before.\nMiddle.\nAfter.");
+  });
+
+  test("extractSection locates headings case-insensitively and ignores fenced headings", () => {
+    const body = [
+      "# Title",
+      "",
+      "## Instructions",
+      "",
+      "```md",
+      "## Error Recovery",
+      "Not a real section",
+      "```",
+      "",
+      "1. Run check.",
+      "",
+      "## Error Recovery",
+      "",
+      "| Failure | Action |",
+      "| --- | --- |",
+      "| Lint fails | Fix it |"
+    ].join("\n");
+
+    const instructions = extractSection(body, ["instructions"]);
+    expect(instructions).toContain("1. Run check.");
+    expect(instructions).toContain("Not a real section");
+
+    const recovery = extractSection(body, ["error recovery", "troubleshooting"]);
+    expect(recovery).toContain("| Lint fails | Fix it |");
+    expect(extractSection(body, ["missing"])).toBeNull();
+  });
+
+  test("tokenizeForSimilarity drops stopwords/short tokens and computes Jaccard similarity", () => {
+    const a = tokenizeForSimilarity("Reviews API changes for typing and error handling.");
+    const b = tokenizeForSimilarity("Reviews API changes for error handling and retries.");
+    expect(a).toEqual(["reviews", "api", "changes", "typing", "error", "handling"]);
+    expect(jaccardSimilarity(a, b)).toBeCloseTo(5 / 7, 5);
+    expect(jaccardSimilarity([], [])).toBe(0);
+  });
+});
+
+describe("findUnusedResources", () => {
+  test("flags unreferenced resource files while allowing folder references and dotfiles", () => {
+    const files = new Set([
+      "SKILL.md",
+      "references/REFERENCE.md",
+      "references/extra.md",
+      "scripts/helper.js",
+      "assets/.gitkeep"
+    ]);
+    const body = [
+      "Read [the reference](references/REFERENCE.md) for rules.",
+      "Use helpers inside `scripts/` when needed."
+    ].join("\n");
+
+    expect(findUnusedResources(body, files)).toEqual(["references/extra.md"]);
+  });
+});
+
+describe("parseEvals", () => {
+  test("normalizes triggers and validates cases", () => {
+    const parsed = parseEvals(
+      JSON.stringify({
+        triggers: {
+          shouldTrigger: ["Audit checkout modal", { prompt: "Check ARIA roles", split: "eval", note: "a11y" }],
+          shouldNotTrigger: ["Run database migration"]
+        },
+        cases: [
+          {
+            id: "modal-a11y",
+            split: "eval",
+            prompt: "Audit Modal.tsx",
+            params: { strict: true },
+            expected: ["Identifies missing focus trap"]
+          }
+        ]
+      })
+    );
+    expect(parsed.triggers?.shouldTrigger).toEqual([
+      { prompt: "Audit checkout modal" },
+      { prompt: "Check ARIA roles", split: "eval", note: "a11y" }
+    ]);
+    expect(parsed.cases?.[0].id).toBe("modal-a11y");
+  });
+
+  test("rejects invalid JSON, non-kebab case ids, duplicate ids and unknown fields", () => {
+    expect(() => parseEvals("{")).toThrow(/not valid JSON/);
+    expect(() => parseEvals(JSON.stringify({ cases: [{ id: "BadId", prompt: "x", expected: ["y"] }] }))).toThrow(
+      /kebab-case/
+    );
+    expect(() =>
+      parseEvals(
+        JSON.stringify({
+          cases: [
+            { id: "dup", prompt: "x", expected: ["y"] },
+            { id: "dup", prompt: "z", expected: ["w"] }
+          ]
+        })
+      )
+    ).toThrow(/duplicated case id 'dup'/);
+    expect(() => parseEvals(JSON.stringify({ extra: true }))).toThrow(/invalid evals.json/);
+  });
+});
+
+describe("sync presets and git source parser", () => {
+  test("resolves expanded agent presets for project and user scopes", () => {
+    const root = path.resolve(os.tmpdir(), "demo-proj");
+    const home = path.resolve(os.tmpdir(), "demo-home");
+
+    expect(resolveTarget(root, "cursor")).toBe(path.join(root, ".cursor", "skills"));
+    expect(resolveTarget(root, "opencode")).toBe(path.join(root, ".opencode", "skills"));
+    expect(resolveTarget(root, "windsurf")).toBe(path.join(root, ".windsurf", "skills"));
+    expect(resolveTarget(root, "gemini")).toBe(path.join(root, ".gemini", "skills"));
+
+    expect(resolveTarget(root, "cursor", { scope: "user", homeDir: home })).toBe(path.join(home, ".cursor", "skills"));
+    expect(resolveTarget(root, "opencode", { scope: "user", homeDir: home })).toBe(
+      path.join(home, ".config", "opencode", "skills")
+    );
+    expect(resolveTarget(root, "windsurf", { scope: "user", homeDir: home })).toBe(
+      path.join(home, ".codeium", "windsurf", "skills")
+    );
+    expect(resolveTarget(root, "gemini", { scope: "user", homeDir: home })).toBe(path.join(home, ".gemini", "skills"));
+  });
+
+  test("parseGitSource supports shorthands, refs, and SSH/HTTPS URLs while ignoring paths and npm packages", () => {
+    expect(parseGitSource("github:acme/skills")).toEqual({
+      url: "https://github.com/acme/skills.git",
+      canonical: "github:acme/skills"
+    });
+    expect(parseGitSource("github:acme/skills#v1.2.0")).toEqual({
+      url: "https://github.com/acme/skills.git",
+      ref: "v1.2.0",
+      canonical: "github:acme/skills#v1.2.0"
+    });
+    expect(parseGitSource("git+https://example.com/team/skills.git#main")).toEqual({
+      url: "https://example.com/team/skills.git",
+      ref: "main",
+      canonical: "git+https://example.com/team/skills.git#main"
+    });
+    expect(parseGitSource("https://example.com/team/skills.git")).toEqual({
+      url: "https://example.com/team/skills.git",
+      canonical: "https://example.com/team/skills.git"
+    });
+    expect(parseGitSource("git@github.com:acme/skills.git#release")).toEqual({
+      url: "git@github.com:acme/skills.git",
+      ref: "release",
+      canonical: "git@github.com:acme/skills.git#release"
+    });
+    expect(parseGitSource("git+file:///tmp/my-skills#dev")).toEqual({
+      url: "file:///tmp/my-skills",
+      ref: "dev",
+      canonical: "git+file:///tmp/my-skills#dev"
+    });
+
+    expect(parseGitSource("../local-lib")).toBeNull();
+    expect(parseGitSource("@acme/skills")).toBeNull();
+    expect(parseGitSource("--upload-pack=evil")).toBeNull();
+    expect(() => parseGitSource("github:acme/skills#--evil")).toThrow(/Invalid Git ref/);
+  });
 });

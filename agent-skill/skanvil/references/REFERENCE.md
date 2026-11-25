@@ -2,21 +2,29 @@
 
 ## Commands
 
-Every command accepts `-C, --cwd <path>` (library root) and `--json`. Exit code `0` means success; `1` means an error or failed check.
+Every command accepts `-C, --cwd <path>` (library root) and `--json` (except `eval export`, which prints JSON directly). Exit code `0` means success; `1` means an error or failed check.
 
-| Command                | Options                                                                                                                                                                                                                                                                |
-| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--target <preset\|path>`                                                                                                               |
-| `add`                  | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                                                                                                    |
-| `edit <skill>`         | `--rename`, `--type`, `--title`, `--description`, `--remove`, `--yes`, `--skip-validate`                                                                                                                                                                               |
-| `list`                 | `--category <id>`                                                                                                                                                                                                                                                      |
-| `validate`             | `--strict`, `--skill <name>`                                                                                                                                                                                                                                           |
-| `index`                | `--check`                                                                                                                                                                                                                                                              |
-| `doctor`               | `--fix`                                                                                                                                                                                                                                                                |
-| `templates eject`      | `--category <id>`, `--force`                                                                                                                                                                                                                                           |
-| `sync [dest]`          | `--target <preset\|path>` (repeatable/comma-separated, must stay inside dest), `--from <pkg\|path>`, `--link`, `--copy`, `--category`, `--skill`, `--force`, `--dry-run`, `--global` (presets only, no dest), `--param name=value` (repeatable, remembered per target) |
-| `build`                | `--out <dir>`, `--force`                                                                                                                                                                                                                                               |
-| `install-skill [dest]` | `--target <preset\|path>`, `--force`, `--global` (presets only, no dest)                                                                                                                                                                                               |
+| Command                | Options                                                                                                                                                                                         |
+| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--no-feedback`, `--target <preset\|path>`                       |
+| `add`                  | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                             |
+| `import <sourceDir>`   | `--type <category>`, `--skill <name>`, `--dry-run`, `--overwrite`, `--skip-validate`                                                                                                            |
+| `edit <skill>`         | `--rename`, `--type`, `--title`, `--description`, `--owner`, `--status <draft\|experimental\|active\|deprecated>`, `--replaced-by <skill>`, `--remove`, `--yes`, `--skip-validate`              |
+| `list`                 | `--category <id>`, `--status <value>`, `--owner <value>`                                                                                                                                        |
+| `validate`             | `--strict`, `--skill <name>`, `--format <text\|github\|sarif\|json>`                                                                                                                            |
+| `diff [baseRef]`       | `--format <text\|markdown>`                                                                                                                                                                     |
+| `index`                | `--check`                                                                                                                                                                                       |
+| `doctor`               | `--fix`, `--scaffold-sections`                                                                                                                                                                  |
+| `stats`                | `--category <id>`, `--skill <name>`, `--sort <tokens\|lines\|name>`                                                                                                                             |
+| `eval route "<p>"`     | `--top <n>`                                                                                                                                                                                     |
+| `eval triggers`        | `--skill <name>`, `--split <train\|eval>`, `--strict`                                                                                                                                           |
+| `eval export`          | `--format <json\|promptfoo>`, `--ablation`, `--skill <name>`, `--split <train\|eval>`, `--out <file>`                                                                                           |
+| `feedback list`        | `--file <path>`, `--skill <name>`                                                                                                                                                               |
+| `feedback promote`     | `--file <path>`, `--skill <name>`, `--dry-run`, `--prune`                                                                                                                                       |
+| `templates eject`      | `--category <id>`, `--force`                                                                                                                                                                    |
+| `sync [dest]`          | `--target <preset\|path>`, `--from <pkg\|path\|git>`, `--link`, `--copy`, `--category`, `--skill`, `--status`, `--include-deprecated`, `--force`, `--dry-run`, `--global`, `--param name=value` |
+| `build`                | `--out <dir>`, `--force`                                                                                                                                                                        |
+| `install-skill [dest]` | `--target <preset\|path>`, `--force`, `--global`, `--no-feedback`                                                                                                                               |
 
 ## `.skanvilrc.json`
 
@@ -24,17 +32,17 @@ Every command accepts `-C, --cwd <path>` (library root) and `--json`. Exit code 
 {
   "$schema": "./node_modules/skanvil/schema.json",
   "name": "my-skills",
-  "skillsDir": "skills", // default
-  "readme": "README.md", // default
+  "skillsDir": "skills",
+  "readme": "README.md",
   "categories": [
     {
-      "id": "front", // used by --type
-      "prefix": "front-", // "" (default category only), "_" or kebab-case ending in "-"
-      "title": "Front", // README section title
+      "id": "front",
+      "prefix": "front-",
+      "title": "Front",
       "aliases": ["frontend", "f"],
-      "default": false, // exactly one category is the default (empty prefix)
-      "indexed": true, // listed in the README
-      "validated": true, // validated against the spec and syncable
+      "default": false,
+      "indexed": true,
+      "validated": true,
       "metadata": { "domain": "frontend" },
       "compatibility": "Designed for frontend repositories."
     }
@@ -44,12 +52,17 @@ Every command accepts `-C, --cwd <path>` (library root) and `--json`. Exit code 
       "Objective",
       "When to Activate This Skill",
       "Instructions",
+      "Error Recovery",
       "Output Format",
       "Quality Criteria"
     ],
-    "placeholders": ["TODO", "describe...", "lorem ipsum", "tbd", "to be defined"],
+    "placeholders": ["describe...", "lorem ipsum", "tbd", "to be defined"],
     "maxLines": 500,
-    "rules": { "max-lines": "warn" } // error | warn | off per rule id
+    "maxDescriptionTokens": 120,
+    "maxAlwaysLoadedTokens": 4000,
+    "overlapThreshold": 0.65,
+    "vagueFallbacks": ["try again", "retry if it fails", "retry until it works", "just retry"],
+    "rules": { "max-lines": "warn", "evals-required": "off", "owner-required": "off" }
   },
   "templates": { "dir": ".skanvil/templates" },
   "sync": { "targets": ["claude"], "mode": "copy" }
@@ -60,38 +73,42 @@ Every command accepts `-C, --cwd <path>` (library root) and `--json`. Exit code 
 
 Default severity is `error` unless noted. Rules marked with `*` are fixable by `doctor --fix`.
 
-- **Files and YAML:** `skill-file`, `frontmatter`, `frontmatter-tabs`*.
-- **Names:**
-  - `folder-name`;
-  - `name-required`*;
-  - `name-format`: 1–64 characters of `a-z0-9-`, with no leading, trailing or double hyphens;
-  - `name-matches-folder`*;
-  - `duplicate-name`.
-- **Spec fields:**
-  - `description-required`;
-  - `description-length` (≤ 1024);
-  - `compatibility-length` (1–500);
-  - `metadata-format` (warn);
-  - `allowed-tools-format` (warn);
-  - `tools-field`* (warn).
-- **Content:** `required-sections`, `placeholders`, `max-lines` (warn), `broken-references`, `template-unchanged` (warn).
-- **README:** `readme-missing`_, `readme-orphan`_, `readme-section`*.
+- **Files and YAML:** `skill-file`, `frontmatter`, `frontmatter-tabs`\*.
+- **Names:** `folder-name`, `name-required`\*, `name-format`, `name-matches-folder`\*, `duplicate-name`.
+- **Spec fields:** `description-required`, `description-length` (<= 1024), `compatibility-length` (1-500), `metadata-format` (warn), `allowed-tools-format` (warn), `tools-field`\* (warn).
+- **Content & quality:** `required-sections`, `placeholders`, `max-lines` (warn), `broken-references`, `unused-resources` (warn), `template-unchanged` (warn), `description-budget` (warn), `description-triggers` (warn), `numbered-steps` (warn), `vague-fallback` (warn), `error-recovery-table` (warn), `description-overlap` (warn), `always-loaded-budget` (warn).
+- **Security & hygiene:** `no-secrets`, `no-local-paths` (warn).
+- **Parameters & evals:** `params-file`, `params-template`, `evals-file`, `evals-required` (off), `duplicate-trigger` (warn).
+- **Governance:** `owner-required` (off), `status-valid` (warn), `replaced-by-exists`.
+- **README:** `readme-missing`\*, `readme-orphan`\*, `readme-section`\*.
 
 ## JSON output shapes
 
-- `list --json` prints `[{ name, type, indexed, valid, description }]`. `indexed` and `valid` are `null` for categories that are not indexed or not validated.
-- `validate --json` prints `{ ok, diagnostics: [{ rule, severity, skill?, message, fixable? }], count, errors, warnings }`.
+- `list --json` prints `[{ name, type, indexed, valid, status?, owner?, replacedBy?, description }]`.
+- `validate --json` prints `{ ok, diagnostics: [{ rule, severity, skill?, message, fixable?, file?, line? }], count, errors, warnings }`.
+- `diff --json` prints `{ baseRef, added, removed, modified, unchangedCount, stage1Tokens, newDiagnostics, resolvedDiagnosticsCount, triggerRegressions }`.
+- `import --json` prints `{ sourceDir, dryRun, imported: [{ source, target, type, status, changes }], skipped }`.
 - `doctor --json` prints the same as validate, plus `fixes: string[]`.
+- `stats --json` prints `{ count, totals: { alwaysLoadedTokens, bodyTokens, bodyLines, resourceFiles, resourceTokens, unreferencedFiles }, skills: [{ name, category, status?, alwaysLoaded, body, resources, totalEstimatedTokens }] }`.
+- `eval route --json` prints `{ prompt, queryTokens, totalSkills, candidates: [{ skill, rank, score, matchedTokens, description }] }`.
+- `eval triggers --json` prints `{ ok, total, passed, failed, bySplit, results: [{ skill, kind, prompt, split?, passed, expectedRank, topSkill, topScore, targetScore, reason? }] }`.
+- `feedback list --json` prints `{ file, totalEntries, uniqueGroups, invalidLines, groups }` and `feedback promote --json` prints `{ file, dryRun, promoted, skipped, invalidLines, prunedLines }`.
 - `index --json` prints `{ updated }`, or `{ upToDate }` with `--check`.
-- `sync --json` prints `{ dryRun, mode, results: [{ target, path, added, updated, unchanged, removed, skipped: [{ skill, reason }], warnings }] }`.
+- `sync --json` prints `{ dryRun, mode, results: [{ target, path, added, updated, unchanged, removed, skipped: [{ skill, reason }], warnings, params, alwaysLoadedTokens }] }`.
 - `add --json` prints `{ skillName, title, type, target, template }`.
 - `edit --json` prints `{ skillName, previousName }`, or `{ removed }`.
+- `install-skill --json` prints `[{ skill, target, path, status, reason? }]`.
 
-## Parameters (`params.json`)
+## Parameters (`params.json`) and Evaluations (`evals.json`)
 
 ```json
 {
-  "ticketTracker": { "type": "enum", "values": ["github", "jira"], "default": "github", "description": "…" },
+  "ticketTracker": {
+    "type": "enum",
+    "values": ["github", "jira"],
+    "default": "github",
+    "description": "Issue tracker"
+  },
   "packageManager": { "type": "string", "default": "npm" },
   "strict": { "type": "boolean", "default": false }
 }
@@ -103,14 +120,29 @@ The syntax inside `SKILL.md`:
 - `{{#if name}}`, `{{#if !name}}`, `{{#if name == "v"}}` and `{{#if name != "v"}}` start a block;
 - `{{else}}` and `{{/if}}` continue and close it.
 
-A tag alone on its line removes the line.
+Optional `evals.json` next to `SKILL.md` (excluded from `sync` and `build`):
 
-What the build generates (`skanvil build`):
-
-- `dist/index.mjs` and `index.cjs`, plus their `.d.mts` and `.d.cts` declarations;
-- one export per skill, `<camelName>(params?) => string`;
-- `skills`, an array with `{ name, category, title, description, params, render(params), files(params) }` for each skill;
-- `getSkill(name)`.
+```json
+{
+  "triggers": {
+    "shouldTrigger": [
+      { "prompt": "Audit accessibility of the checkout modal", "split": "train" },
+      { "prompt": "Check WCAG contrast in this form", "split": "eval" }
+    ],
+    "shouldNotTrigger": [{ "prompt": "Add a database index migration", "split": "eval" }]
+  },
+  "cases": [
+    {
+      "id": "modal-audit",
+      "split": "eval",
+      "prompt": "Audit src/Modal.tsx for keyboard traps.",
+      "expected": ["Identifies focus trapping issues and proposes concrete ARIA fixes."],
+      "mustContain": ["aria-"],
+      "mustNotContain": ["placeholder"]
+    }
+  ]
+}
+```
 
 ## Template variables
 

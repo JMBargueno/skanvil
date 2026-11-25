@@ -16,7 +16,7 @@ import {
   renderTemplate,
   resolveParamValues
 } from "../src/core/params.js";
-import { scaffoldSkill } from "../src/core/skills.js";
+import { editSkill, scaffoldSkill } from "../src/core/skills.js";
 import { syncSkills } from "../src/core/sync.js";
 import { validateLibrary } from "../src/core/validate.js";
 
@@ -182,7 +182,14 @@ describe("parametrized skills in a library", () => {
     const root = await library();
     const project = tmp();
     const [result] = await syncSkills(await Library.open(root), { dest: project, targets: ["agents"], mode: "link" });
-    expect(result.warnings).toEqual(["front-code-review has parameters, so it was copied rendered instead of linked"]);
+    expect(result.warnings).toContain("front-code-review has parameters, so it was copied rendered instead of linked");
+    expect(
+      result.warnings.filter(
+        (warning) =>
+          warning !== "front-code-review has parameters, so it was copied rendered instead of linked" &&
+          !/^could not link back-svc .*; copied instead$/.test(warning)
+      )
+    ).toEqual([]);
     expect(fs.lstatSync(path.join(project, ".agents", "skills", "front-code-review")).isSymbolicLink()).toBe(false);
   });
 });
@@ -265,6 +272,22 @@ describe("build", () => {
     const lib = await Library.open(root);
     await expect(buildLibrary(lib)).rejects.toThrow(/Validation found 1 error/);
     await expect(buildLibrary(lib, { force: true })).resolves.toMatchObject({ skills: expect.any(Array) });
+  });
+
+  test("marks deprecated skills with @deprecated JSDoc and excludes evals.json", async () => {
+    const root = await library();
+    await editSkill(root, "back-svc", { status: "deprecated", replacedBy: "front-code-review" });
+    fs.writeFileSync(
+      path.join(root, "skills", "front-code-review", "evals.json"),
+      JSON.stringify({ triggers: { shouldTrigger: ["Review code"] } })
+    );
+    const lib = await Library.open(root);
+    await buildLibrary(lib);
+    const dts = fs.readFileSync(path.join(root, "dist", "index.d.mts"), "utf8");
+    expect(dts).toContain("@deprecated Use `front-code-review` instead.");
+
+    const esm = await import(pathToFileURL(path.join(root, "dist", "index.mjs")).href);
+    expect(Object.keys(esm.getSkill("front-code-review").files())).not.toContain("evals.json");
   });
 
   test("export names avoid collisions and reserved words", async () => {

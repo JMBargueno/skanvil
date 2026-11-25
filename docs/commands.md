@@ -12,10 +12,10 @@ skanvil <command> [options]
 
 **Common options:**
 
-| Option             | Description                                                                                                                                           |
-| ------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `-C, --cwd <path>` | Library root. Default: the current directory. For `sync`, this is the _source_ library. Every command except `wizard` and `install-skill` accepts it. |
-| `--json`           | Print machine-readable JSON on stdout. Informational text is suppressed; warnings and errors still go to stderr.                                      |
+| Option             | Description                                                                                                                                                                                 |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `-C, --cwd <path>` | Library root. Default: the current directory. For `sync`, this is the _source_ library. Every command except `wizard` and `install-skill` accepts it.                                       |
+| `--json`           | Print machine-readable JSON on stdout. Informational text is suppressed; warnings and errors still go to stderr. Accepted by every command except `wizard` and `eval export` (always JSON). |
 
 **Exit codes:**
 
@@ -30,10 +30,10 @@ An interactive assistant. `skanvil` runs it when called with no arguments in a t
 
 The menu depends on the current folder:
 
-| Where             | Actions                                                                                                                                                                               |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Outside a library | Create a library (default preset, your own categories, or no categories); install skills from a library into this folder; install the agent skill.                                    |
-| Inside a library  | Add a skill; edit, rename, move or delete one; list skills; check the library and apply automatic fixes; install the skills into a project or for your user; install the agent skill. |
+| Where             | Actions                                                                                                                                                                                                                                                                                          |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Outside a library | Create a library (default preset, your own categories, or no categories, optionally choosing whether to install `skanvil` and `skanvil-feedback`); install skills from a library; install the agent skills.                                                                                      |
+| Inside a library  | Add a skill; edit, rename, move, set owner/status, deprecate or delete one; list skills; check and repair the library; inspect 3-stage token budgets (`stats`); check trigger routing (`eval triggers`); install the skills into a project or for your user; install or update the agent skills. |
 
 How it behaves:
 
@@ -57,6 +57,7 @@ Create a new library in `dir`. If `dir` is omitted, `--cwd` or the current direc
 | `--no-git`              | Do not run `git init`.                                                                                                                                  |
 | `--eject-templates`     | Also copy the skill template to `.skanvil/templates/skill`.                                                                                             |
 | `--no-agent-skill`      | Do not install the [`skanvil` agent skill](#install-skill-dest) into the library. By default it goes to `.claude/skills/skanvil`.                       |
+| `--no-feedback`         | Do not install `skanvil-feedback` alongside `skanvil`.                                                                                                  |
 | `--target <name>`       | Default sync targets written to `.skanvilrc.json`, which are also where the agent skill is installed. Repeatable or comma-separated. Default: `claude`. |
 
 ```bash
@@ -89,12 +90,16 @@ Change or delete an existing skill. Provide at least one change.
 | `--type <category>`     | Move to another category: changes the prefix and README section, and updates `metadata` and `compatibility`. |
 | `--title <value>`       | New `# heading` and README title.                                                                            |
 | `--description <value>` | New frontmatter description and README description.                                                          |
+| `--owner <value>`       | Set `metadata.owner`.                                                                                        |
+| `--status <value>`      | Set `metadata.status` (`draft`, `experimental`, `active` or `deprecated`).                                   |
+| `--replaced-by <skill>` | Set `metadata.replaced-by` (implies `--status deprecated`).                                                  |
 | `--remove`              | Delete the skill folder and its README entry.                                                                |
 | `--yes`                 | Do not ask for confirmation before `--remove`. Required in CI.                                               |
 | `--skip-validate`       | Do not validate afterwards.                                                                                  |
 
 ```bash
 skanvil edit front-api-review --rename http-review --type back
+skanvil edit front-legacy --status deprecated --replaced-by front-modern
 skanvil edit back-http-review --remove --yes
 ```
 
@@ -102,39 +107,92 @@ skanvil edit back-http-review --remove --yes
 
 Print a table of every skill folder.
 
-| Column        | Meaning                                                                |
-| ------------- | ---------------------------------------------------------------------- |
-| `SKILL`       | Folder name.                                                           |
-| `TYPE`        | Category id.                                                           |
-| `IN README`   | `yes`, `NO`, or `-` for categories that are not indexed.               |
-| `VALID`       | `yes` (no errors), `NO`, or `-` for categories that are not validated. |
-| `DESCRIPTION` | Frontmatter description, truncated to the terminal width.              |
+| Column        | Meaning                                                                                                 |
+| ------------- | ------------------------------------------------------------------------------------------------------- |
+| `SKILL`       | Folder name.                                                                                            |
+| `TYPE`        | Category id.                                                                                            |
+| `IN README`   | `yes`, `NO`, or `-` for categories that are not indexed.                                                |
+| `VALID`       | `yes` (no errors), `NO`, or `-` for categories that are not validated.                                  |
+| `STATUS`      | Shown when any skill sets `metadata.status`.                                                            |
+| `OWNER`       | Shown when any skill sets `metadata.owner`.                                                             |
+| `DESCRIPTION` | Frontmatter description (prefixed for deprecated skills with replacement), truncated to terminal width. |
 
-| Option            | Description             |
-| ----------------- | ----------------------- |
-| `--category <id>` | Only list one category. |
+| Option            | Description                                  |
+| ----------------- | -------------------------------------------- |
+| `--category <id>` | Only list one category.                      |
+| `--status <val>`  | Only list skills matching `metadata.status`. |
+| `--owner <val>`   | Only list skills matching `metadata.owner`.  |
 
-With `--json`, it prints an array of `{ name, type, indexed, valid, description }`.
+With `--json`, it prints an array of `{ name, type, indexed, valid, status?, owner?, replacedBy?, description }`.
+
+```bash
+skanvil list --status deprecated
+skanvil list --owner "@frontend-platform" --json
+```
 
 ## `validate`
 
 Run every [validation rule](validation.md).
 
-| Option           | Description                          |
-| ---------------- | ------------------------------------ |
-| `--strict`       | Warnings also make the command fail. |
-| `--skill <name>` | Only report problems of one skill.   |
+| Option              | Description                                                                     |
+| ------------------- | ------------------------------------------------------------------------------- |
+| `--strict`          | Warnings also make the command fail.                                            |
+| `--skill <name>`    | Only report problems of one skill.                                              |
+| `--format <format>` | Output format: `text` (default), `github` (PR annotations), `sarif`, or `json`. |
 
-Exit code 1 means there are errors, or warnings with `--strict`. `skanvil validate --help` lists every rule with its default severity. `--json` prints:
+Exit code 1 means there are errors, or warnings with `--strict`. `skanvil validate --help` lists every rule with its default severity. `--json` (or `--format json`) prints:
 
 ```json
 {
   "ok": false,
-  "diagnostics": [{ "rule": "placeholders", "severity": "error", "skill": "front-x", "message": "…" }],
+  "diagnostics": [
+    {
+      "rule": "placeholders",
+      "severity": "error",
+      "skill": "front-x",
+      "message": "contains a forbidden placeholder (\"TODO\")",
+      "file": "skills/front-x/SKILL.md",
+      "line": 14
+    }
+  ],
   "count": 3,
   "errors": 1,
   "warnings": 0
 }
+```
+
+## `diff [baseRef]`
+
+Compare the working library against a Git ref (`HEAD` by default) to inspect changed skills, Stage-1 `alwaysLoadedTokens` deltas, `params.json` schema changes, newly introduced validation diagnostics, and trigger routing regressions. Works whether the library is at the Git root or in a monorepo subdirectory.
+
+| Option              | Description                                    |
+| ------------------- | ---------------------------------------------- |
+| `--format <format>` | Output format: `text` (default) or `markdown`. |
+
+```bash
+skanvil diff
+skanvil diff origin/main --format markdown > pr-comment.md
+skanvil diff HEAD~1 --json
+```
+
+## `import <sourceDir>`
+
+Bulk-import existing skill folders (such as `.claude/skills/` or `.cursor/skills/`) or a single skill directory containing `SKILL.md` into the library.
+
+- Strips/applies the `--type` category prefix cleanly, aligns frontmatter `name`, converts legacy `tools` to `allowed-tools`, fills missing category `metadata`/`compatibility`, ensures a `# Title` heading, and excludes `.skanvil-sync.json`.
+- Updates `README.md` and rolls back on failure. Existing skills are skipped unless `--overwrite` is passed.
+
+| Option              | Description                                                       |
+| ------------------- | ----------------------------------------------------------------- |
+| `--type <category>` | Category id or alias from `.skanvilrc.json`.                      |
+| `--skill <name>`    | Only import specific skill(s). Repeatable or comma-separated.     |
+| `--dry-run`         | Preview imports and skipped collisions without writing.           |
+| `--overwrite`       | Replace existing skill folders matching the resolved target name. |
+| `--skip-validate`   | Skip post-import validation.                                      |
+
+```bash
+skanvil import ../app/.claude/skills --type front --dry-run
+skanvil import ../legacy-skill --type back --overwrite
 ```
 
 ## `index`
@@ -161,7 +219,141 @@ With `--fix` it:
 - replaces tabs in the frontmatter;
 - converts `tools` to `allowed-tools`.
 
+Pass `--scaffold-sections` alongside `--fix` to insert minimal stubs (including the `## Error Recovery` Markdown table) for any missing sections from `validation.requiredSections`. Stubs keep a `template-unchanged` warning until you replace the generic row with real guidance.
+
+| Option                | Description                                                                        |
+| --------------------- | ---------------------------------------------------------------------------------- |
+| `--fix`               | Apply automatic repairs.                                                           |
+| `--scaffold-sections` | Insert minimal stubs for missing `validation.requiredSections` (requires `--fix`). |
+
 It then validates again and exits 1 if errors remain.
+
+## `stats`
+
+Report 3-stage context-budget metrics (`name` + `description`, `SKILL.md` body lines/tokens, and `references/` / `scripts/` / `assets/` resource counts) for validated skills. See [Evals and quality](evals-and-quality.md).
+
+| Column      | Meaning                                                                                |
+| ----------- | -------------------------------------------------------------------------------------- |
+| `SKILL`     | Folder name.                                                                           |
+| `STAGE 1`   | Estimated always-loaded tokens (`name` + `description`).                               |
+| `LINES`     | Total lines in `SKILL.md` (rendered with defaults for parametrized skills).            |
+| `BODY TOK`  | Estimated tokens of the full `SKILL.md` file.                                          |
+| `RESOURCES` | Non-hidden file count and estimated text tokens in `references/`/`scripts/`/`assets/`. |
+| `UNUSED`    | Count of resource files never referenced from `SKILL.md`.                              |
+
+| Option            | Description                                                |
+| ----------------- | ---------------------------------------------------------- |
+| `--category <id>` | Only include skills of this category.                      |
+| `--skill <name>`  | Only inspect one skill.                                    |
+| `--sort <key>`    | Sort order: `tokens`, `lines` or `name` (default: `name`). |
+
+```bash
+skanvil stats --sort tokens
+skanvil stats --category front --json
+```
+
+`--json` prints:
+
+```json
+{
+  "count": 1,
+  "totals": {
+    "alwaysLoadedTokens": 23,
+    "bodyTokens": 523,
+    "bodyLines": 52,
+    "resourceFiles": 3,
+    "resourceTokens": 218,
+    "unreferencedFiles": 0
+  },
+  "skills": [
+    {
+      "name": "front-a11y",
+      "category": "front",
+      "alwaysLoaded": { "chars": 89, "estimatedTokens": 23 },
+      "body": { "lines": 52, "chars": 2092, "estimatedTokens": 523 },
+      "resources": { "files": 3, "chars": 872, "estimatedTokens": 218, "unreferencedFiles": [] },
+      "totalEstimatedTokens": 741
+    }
+  ]
+}
+```
+
+## `eval triggers`
+
+Evaluate `shouldTrigger` and `shouldNotTrigger` prompts declared in each skill's `evals.json` offline against the library's skill descriptions using BM25 lexical scoring.
+
+| Option           | Description                                    |
+| ---------------- | ---------------------------------------------- |
+| `--skill <name>` | Only check triggers belonging to one skill.    |
+| `--split <tag>`  | Only check prompts tagged `train` or `eval`.   |
+| `--strict`       | Exit with code 1 when any trigger check fails. |
+
+```bash
+skanvil eval triggers
+skanvil eval triggers --split eval --strict --json
+```
+
+`--json` prints `{ ok, total, passed, failed, bySplit, results }`.
+
+## `eval export`
+
+Export `evals.json` cases and triggers as structured JSON or a Promptfoo configuration for external LLM evaluation and blind A/B ablation testing.
+
+| Option              | Description                                             |
+| ------------------- | ------------------------------------------------------- |
+| `--format <format>` | Output format: `json` (default) or `promptfoo`.         |
+| `--ablation`        | Pair each case with a `without-skill` baseline variant. |
+| `--skill <name>`    | Only export one skill.                                  |
+| `--split <tag>`     | Only export items tagged `train` or `eval`.             |
+| `--out <file>`      | Write the dataset to a file instead of stdout.          |
+
+```bash
+skanvil eval export --format json --ablation
+skanvil eval export --format promptfoo --ablation --split eval --out evals.promptfoo.json
+```
+
+## `eval route <prompt>`
+
+Simulate Stage-1 offline BM25 trigger routing for any free-form user prompt across all validated, non-deprecated skills in the library.
+
+| Option      | Description                                               |
+| ----------- | --------------------------------------------------------- |
+| `--top <n>` | Maximum matching candidate skills to return (default: 5). |
+
+```bash
+skanvil eval route "Audit React modal keyboard focus" --top 3
+skanvil eval route "Review Postgres migration locks" --json
+```
+
+## `feedback list`
+
+Summarize and group friction reports recorded in `.skanvil-feedback.jsonl` (produced by the bundled `skanvil-feedback` skill), tolerating malformed lines without aborting.
+
+| Option           | Description                                                   |
+| ---------------- | ------------------------------------------------------------- |
+| `--file <path>`  | Feedback JSONL log path (default: `.skanvil-feedback.jsonl`). |
+| `--skill <name>` | Only include entries for one skill.                           |
+
+```bash
+skanvil feedback list
+skanvil feedback list --skill back-migrations --json
+```
+
+## `feedback promote`
+
+Promote validated `suggestedEvalCase` entries from `.skanvil-feedback.jsonl` into target skill `evals.json` suites, avoiding duplicate IDs or prompts and verifying parameter overrides against `params.json`.
+
+| Option           | Description                                                                      |
+| ---------------- | -------------------------------------------------------------------------------- |
+| `--file <path>`  | Feedback JSONL log path (default: `.skanvil-feedback.jsonl`).                    |
+| `--skill <name>` | Only promote entries for one skill.                                              |
+| `--dry-run`      | Preview promotions without editing `evals.json` or the JSONL log.                |
+| `--prune`        | Remove promoted lines from the log while keeping skipped/invalid entries intact. |
+
+```bash
+skanvil feedback promote --dry-run
+skanvil feedback promote --prune --json
+```
 
 ## `templates eject`
 
@@ -176,29 +368,36 @@ Copy the built-in skill template into the library so you can edit it.
 
 Install the library's skills into a project. `dest` defaults to the current directory. See [Sync](sync.md).
 
-| Option                 | Description                                                                                                                                                                    |
-| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `--target <name>`      | `claude`, `copilot`, `agents`, `codex`, or a path relative to `dest`. Repeatable and comma-separated. Default: `sync.targets` from the config, or `claude`.                    |
-| `--from <pkg\|path>`   | Source library: a folder, or an npm package installed in a `node_modules` above `dest`. Default: `--cwd`.                                                                      |
-| `--link`               | Symlink instead of copying (junctions on Windows).                                                                                                                             |
-| `--copy`               | Copy, even if the config sets `sync.mode: "link"`.                                                                                                                             |
-| `--category <id>`      | Only sync this category. Repeatable. Disables pruning.                                                                                                                         |
-| `--skill <name>`       | Only sync this skill. Repeatable. Disables pruning.                                                                                                                            |
-| `--force`              | Also sync skills that have validation errors.                                                                                                                                  |
-| `--dry-run`            | Show what would change without writing.                                                                                                                                        |
-| `--param <name=value>` | Value for [parametrized skills](params-and-exports.md). Repeatable. It applies to every synced skill that declares it, and an unknown name is an error. Remembered per target. |
-| `--global`             | Install into your user folders instead of a project (see below). Do not pass `dest` with it.                                                                                   |
+| Option                    | Description                                                                                                                                                                                             |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--target <name>`         | `claude`, `copilot`, `agents`, `codex`, `cursor`, `opencode`, `windsurf`, `gemini`, or a path relative to `dest`. Repeatable and comma-separated. Default: `sync.targets` from the config, or `claude`. |
+| `--from <pkg\|path\|git>` | Source library: a folder, an installed npm package in `node_modules`, or a Git URL (`github:org/repo[#ref]`, `git+https://...`, `git@...`). Default: `--cwd`.                                           |
+| `--link`                  | Symlink instead of copying (junctions on Windows; falls back to copy for temporary Git sources).                                                                                                        |
+| `--copy`                  | Copy, even if the config sets `sync.mode: "link"`.                                                                                                                                                      |
+| `--category <id>`         | Only sync this category. Repeatable. Disables pruning.                                                                                                                                                  |
+| `--skill <name>`          | Only sync this skill. Repeatable. Disables pruning.                                                                                                                                                     |
+| `--status <value>`        | Only sync skills with this `metadata.status`. Repeatable. Disables pruning.                                                                                                                             |
+| `--include-deprecated`    | Also sync skills marked `metadata.status: "deprecated"` (skipped and pruned by default).                                                                                                                |
+| `--force`                 | Also sync skills that have validation errors.                                                                                                                                                           |
+| `--dry-run`               | Show what would change without writing.                                                                                                                                                                 |
+| `--param <name=value>`    | Value for [parametrized skills](params-and-exports.md). Repeatable. It applies to every synced skill that declares it, and an unknown name is an error. Remembered per target and source.               |
+| `--global`                | Install into your user folders instead of a project (see below). Do not pass `dest` with it.                                                                                                            |
 
 Custom `--target` paths must resolve to a folder inside `dest`: `../shared` or `.` are rejected before anything is written. With `--global`, only presets are accepted:
 
-- `claude` installs into `~/.claude/skills`;
-- `copilot` installs into `~/.copilot/skills`;
-- `agents` and `codex` install into `~/.agents/skills`.
+- `claude` → `~/.claude/skills`
+- `copilot` → `~/.copilot/skills`
+- `agents` / `codex` → `~/.agents/skills`
+- `cursor` → `~/.cursor/skills`
+- `opencode` → `~/.config/opencode/skills`
+- `windsurf` → `~/.codeium/windsurf/skills`
+- `gemini` → `~/.gemini/skills`
 
 ```bash
-skanvil sync ../my-app --target claude,copilot --dry-run
+skanvil sync ../my-app --target claude,cursor --dry-run
 skanvil sync --from @acme/my-skills --target agents --link
-skanvil sync -C ./my-skills --global --target claude
+skanvil sync --from github:acme/my-skills#v1 --target claude
+skanvil sync -C ./my-skills --global --target claude,gemini
 ```
 
 ## `build`
@@ -214,18 +413,19 @@ Generate the library's npm exports in `dist/`: `index.mjs`, `index.cjs` and thei
 
 ## `install-skill [dest]`
 
-Install or update the `skanvil` agent skill in a project, so coding agents there know how to use skanvil: which commands to run, the golden rules, and how to fix each diagnostic. `dest` defaults to the current directory.
+Install or update the `skanvil` and `skanvil-feedback` agent skills in a project, so coding agents there know how to use skanvil, fix diagnostics, and log skill friction reports. `dest` defaults to the current directory.
 
-| Option            | Description                                                                                                              |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------ |
-| `--target <name>` | `claude`, `copilot`, `agents`, `codex`, or a path relative to `dest`. Repeatable and comma-separated. Default: `claude`. |
-| `--force`         | Replace a `skanvil` folder that skanvil did not install, or reinstall the same version.                                  |
-| `--global`        | Install into your user folders (`~/.claude/skills`, …) so every project gets it. Presets only; no `dest`.                |
+| Option            | Description                                                                                                                                                          |
+| ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `--target <name>` | `claude`, `copilot`, `agents`, `codex`, `cursor`, `opencode`, `windsurf`, `gemini`, or a path relative to `dest`. Repeatable and comma-separated. Default: `claude`. |
+| `--force`         | Replace a `skanvil` or `skanvil-feedback` folder that skanvil did not install, or reinstall the same version.                                                        |
+| `--global`        | Install into your user folders (`~/.claude/skills`, `~/.cursor/skills`, …) so every project gets it. Presets only; no `dest`.                                        |
+| `--no-feedback`   | Do not install `skanvil-feedback` alongside `skanvil`.                                                                                                               |
 
-Installed copies carry `metadata.skanvil-version`. Run the command again after upgrading skanvil to refresh them. It exits with 1 if any target was skipped because it holds a foreign `skanvil` folder.
+Installed copies carry `metadata.skanvil-version`. Run the command again after upgrading skanvil to refresh them. It exits with 1 if any target was skipped because it holds a foreign folder.
 
 ```bash
 skanvil install-skill --target claude,copilot
-skanvil install-skill ../my-app --target agents --json
+skanvil install-skill ../my-app --target agents --no-feedback --json
 skanvil install-skill --global --target claude,copilot
 ```

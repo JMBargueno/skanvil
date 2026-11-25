@@ -13,6 +13,7 @@ import { Categories } from "./categories.js";
 import {
   CONFIG_FILE,
   DEFAULT_CATEGORIES,
+  DEFAULT_MAX_DESCRIPTION_TOKENS,
   DEFAULT_MAX_LINES,
   DEFAULT_PLACEHOLDERS,
   DEFAULT_REQUIRED_SECTIONS,
@@ -83,6 +84,11 @@ export interface CreateLibraryOptions {
    * so agents working in the library know how to use the CLI. @defaultValue `true`
    */
   agentSkill?: boolean;
+  /**
+   * Also install the `skanvil-feedback` agent skill alongside `skanvil`. Ignored when
+   * `agentSkill` is `false`. @defaultValue `true`
+   */
+  feedbackSkill?: boolean;
 }
 
 /** Result of {@link createLibrary}. */
@@ -176,6 +182,7 @@ export async function createLibrary(target: string, options: CreateLibraryOption
       requiredSections: DEFAULT_REQUIRED_SECTIONS,
       placeholders: DEFAULT_PLACEHOLDERS,
       maxLines: DEFAULT_MAX_LINES,
+      maxDescriptionTokens: DEFAULT_MAX_DESCRIPTION_TOKENS,
       rules: {}
     },
     sync: { targets: syncTargets, mode: "copy" }
@@ -188,7 +195,13 @@ export async function createLibrary(target: string, options: CreateLibraryOption
   }
 
   const agentSkill =
-    options.agentSkill === false ? [] : await installAgentSkill({ dest: target, targets: syncTargets });
+    options.agentSkill === false
+      ? []
+      : await installAgentSkill({
+          dest: target,
+          targets: syncTargets,
+          includeFeedback: options.feedbackSkill
+        });
 
   let gitInitialized = false;
   if (options.git !== false) {

@@ -26,39 +26,79 @@ skill.getString("description");
 
 Functions that take a library also accept a root path (`scaffoldSkill("./my-skills", …)`). Pass a `Library` instance when making several calls, so the config is loaded once.
 
-## Creating libraries and skills
+## Creating, importing and editing skills
 
 ```ts
-import { createLibrary, scaffoldSkill, editSkill, removeSkill } from "skanvil";
+import { createLibrary, scaffoldSkill, importSkills, editSkill, removeSkill } from "skanvil";
 
 await createLibrary("./my-skills", { scope: "acme", git: false });
 
 const { skillName } = await scaffoldSkill("./my-skills", {
   type: "front",
   name: "API review",
-  description: "Reviews API integration changes",
-  includeScripts: false
+  description: "Reviews API integration changes"
 }); // "front-api-review"
 
-await editSkill("./my-skills", skillName, { rename: "http-review", type: "back" });
+await importSkills("./my-skills", "../app/.claude/skills", { type: "front" });
+
+await editSkill("./my-skills", skillName, {
+  rename: "http-review",
+  type: "back",
+  owner: "@platform",
+  status: "active"
+});
 await removeSkill("./my-skills", "back-http-review");
 ```
 
-`editSkill` is transactional: if it fails, `SKILL.md` and the README are restored and the error message starts with `Edit failed and was rolled back`.
+`editSkill` and `importSkills` are transactional: if a failure occurs mid-batch, modified files, folders and the README are restored cleanly.
+
+## Measuring budgets, evals, feedback and diffs
+
+```ts
+import {
+  Library,
+  analyzeLibraryStats,
+  checkTriggerRouting,
+  routePrompt,
+  exportEvalDataset,
+  summarizeFeedback,
+  promoteFeedback,
+  diffLibrary,
+  formatDiffMarkdown
+} from "skanvil";
+
+const lib = await Library.open("./my-skills");
+
+const stats = await analyzeLibraryStats(lib, { sort: "tokens" });
+console.log("Stage-1 tokens:", stats.totals.alwaysLoadedTokens);
+
+const route = await routePrompt(lib, "Review React modal ARIA focus", { top: 3 });
+const triggers = await checkTriggerRouting(lib, { split: "eval" });
+const promptfoo = await exportEvalDataset(lib, { format: "promptfoo", ablation: true });
+
+const feedback = await summarizeFeedback(lib);
+await promoteFeedback(lib, { prune: true });
+
+const diff = await diffLibrary(lib, { baseRef: "origin/main" });
+console.log(formatDiffMarkdown(diff));
+```
 
 ## Validating
 
 ```ts
-import { Library, validateLibrary, formatDiagnostic, RULES } from "skanvil";
+import { Library, validateLibrary, formatDiagnostic, formatGitHubAnnotations, formatSarif, RULES } from "skanvil";
 
-const result = await validateLibrary(await Library.open("."));
+const lib = await Library.open(".");
+const result = await validateLibrary(lib);
 for (const d of result.diagnostics) {
   console.log(d.severity, formatDiagnostic(d), `[${d.rule}]`, RULES[d.rule].description);
 }
+const gh = formatGitHubAnnotations(result, lib);
+const sarifJson = formatSarif(result, lib);
 process.exitCode = result.errors > 0 ? 1 : 0;
 ```
 
-`ValidationResult` is `{ diagnostics, count, errors, warnings }`. Each `Diagnostic` is `{ rule, severity, skill?, message, fixable? }`.
+`ValidationResult` is `{ diagnostics, count, errors, warnings }`. Each `Diagnostic` is `{ rule, severity, skill?, message, fixable?, file?, line? }`.
 
 ## Maintaining the README index
 
@@ -85,9 +125,25 @@ const results = await syncSkills(await Library.open("./my-skills"), {
   dest: "../my-app",
   targets: ["claude", "copilot"],
   mode: "copy",
+  includeDeprecated: false,
   dryRun: true
 });
-for (const r of results) console.log(r.target, r.added, r.updated, r.removed, r.skipped);
+for (const r of results) {
+  console.log(r.target, r.added, r.updated, r.removed, r.skipped, r.alwaysLoadedTokens);
+}
+```
+
+## Building package exports
+
+```ts
+import { Library, buildLibrary, exportNames } from "skanvil";
+
+const lib = await Library.open("./my-skills");
+const { files, skills } = await buildLibrary(lib, { outDir: "dist" });
+console.log(
+  files,
+  skills.map((s) => s.exportName)
+);
 ```
 
 ## Editing SKILL.md files directly
@@ -115,17 +171,24 @@ const schema = configJsonSchema(); // same as skanvil/schema.json
 
 ## Export overview
 
-| Export                                                                                                 | Kind               | Purpose                                                |
-| ------------------------------------------------------------------------------------------------------ | ------------------ | ------------------------------------------------------ |
-| `Library`                                                                                              | class              | Open a library; paths, skills and README I/O.          |
-| `Categories`                                                                                           | class              | Category lookup, prefix inference, name building.      |
-| `SkillFile`                                                                                            | class              | Parse and edit a `SKILL.md` without losing formatting. |
-| `createLibrary`, `parseProfile`                                                                        | functions          | `skanvil init`.                                        |
-| `scaffoldSkill`, `editSkill`, `removeSkill`                                                            | functions          | `skanvil add` / `edit`.                                |
-| `collectSkills`                                                                                        | function           | `skanvil list` rows.                                   |
-| `validateLibrary`, `formatDiagnostic`, `RULES`                                                         | functions / const  | `skanvil validate`.                                    |
-| `rebuildIndex`, `reconcileIndex`, `doctor`                                                             | functions          | `skanvil index` / `doctor`.                            |
-| `resolveSkillTemplate`, `ejectSkillTemplate`                                                           | functions          | Templates.                                             |
-| `syncSkills`, `resolveTarget`, `TARGET_PRESETS`, `MANIFEST_FILE`                                       | functions / consts | `skanvil sync`.                                        |
-| `installAgentSkill`, `agentSkillSource`, `AGENT_SKILL_NAME`                                            | functions / const  | `skanvil install-skill`.                               |
-| `resolveConfig`, `loadConfig`, `ConfigSchema`, `configJsonSchema`, `DEFAULT_CATEGORIES`, `CONFIG_FILE` | functions / consts | Configuration.                                         |
+| Export                                                                                                                     | Kind               | Purpose                                                   |
+| -------------------------------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------- |
+| `Library`                                                                                                                  | class              | Open a library; paths, skills and README I/O.             |
+| `Categories`                                                                                                               | class              | Category lookup, prefix inference, name building.         |
+| `SkillFile`                                                                                                                | class              | Parse and edit a `SKILL.md` without losing formatting.    |
+| `createLibrary`, `parseProfile`                                                                                            | functions          | `skanvil init`.                                           |
+| `scaffoldSkill`, `editSkill`, `removeSkill`, `importSkills`                                                                | functions          | `skanvil add` / `edit` / `import`.                        |
+| `collectSkills`                                                                                                            | function           | `skanvil list` rows (with category/status/owner filters). |
+| `validateLibrary`, `formatDiagnostic`, `formatGitHubAnnotations`, `formatSarif`, `resolveDiagnosticFile`, `RULES`          | functions / const  | `skanvil validate` and CI formatters.                     |
+| `findBrokenReferences`, `findUnusedResources`                                                                              | functions          | Path and Stage-3 resource checks.                         |
+| `analyzeLibraryStats`, `estimateTokens`                                                                                    | functions          | `skanvil stats` and Stage-1 token estimation.             |
+| `parseEvals`, `readEvals`, `checkTriggerRouting`, `routePrompt`, `exportEvalDataset`, `EvalsFileSchema`, `EVALS_FILE`      | functions / consts | `skanvil eval triggers`, `route` and `export`.            |
+| `readFeedbackLog`, `summarizeFeedback`, `promoteFeedback`, `FEEDBACK_FILE`                                                 | functions / const  | `.skanvil-feedback.jsonl` reader and promotion.           |
+| `diffLibrary`, `formatDiffMarkdown`                                                                                        | functions          | `skanvil diff` Git snapshot comparison and PR Markdown.   |
+| `rebuildIndex`, `reconcileIndex`, `doctor`                                                                                 | functions          | `skanvil index` / `doctor` (`DoctorOptions`).             |
+| `resolveSkillTemplate`, `ejectSkillTemplate`                                                                               | functions          | Templates.                                                |
+| `syncSkills`, `resolveTarget`, `resolveSource`, `resolveSourceHandle`, `parseGitSource`, `TARGET_PRESETS`, `MANIFEST_FILE` | functions / consts | Multi-library Manifest v2 sync and Git `--from`.          |
+| `buildLibrary`, `exportNames`                                                                                              | functions          | `skanvil build` typed npm exports.                        |
+| `installAgentSkill`, `agentSkillSource`, `feedbackSkillSource`, `AGENT_SKILL_NAME`, `FEEDBACK_SKILL_NAME`                  | functions / consts | `skanvil install-skill`.                                  |
+| `estimateTokens`, `extractSection`, `stripFencedCode`, `tokenizeForSimilarity`, `jaccardSimilarity`                        | functions          | Text, section and lexical similarity helpers.             |
+| `resolveConfig`, `loadConfig`, `ConfigSchema`, `configJsonSchema`, `DEFAULT_CATEGORIES`, `SKILL_STATUSES`, `CONFIG_FILE`   | functions / consts | Configuration and lifecycle constants.                    |

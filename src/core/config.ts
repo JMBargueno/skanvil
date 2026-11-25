@@ -17,6 +17,12 @@ export const SEVERITIES = ["error", "warn", "off"] as const;
 /** Severity of a validation rule as configured in `validation.rules`. */
 export type Severity = (typeof SEVERITIES)[number];
 
+/** Allowed lifecycle statuses for `metadata.status` in a `SKILL.md`. */
+export const SKILL_STATUSES = ["draft", "experimental", "active", "deprecated"] as const;
+
+/** Lifecycle status of a skill (`metadata.status`). */
+export type SkillStatus = (typeof SKILL_STATUSES)[number];
+
 /** Valid category prefixes: empty (default category only), `_`, or kebab-case ending in `-`. */
 const PREFIX_PATTERN = /^(|_|[a-z0-9]+(?:-[a-z0-9]+)*-)$/;
 
@@ -95,6 +101,28 @@ export const ConfigSchema = z
           .positive()
           .optional()
           .describe("Line count reported by the `max-lines` rule. Default: 500."),
+        maxDescriptionTokens: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Estimated Stage-1 token budget (name + description) for `description-budget`. Default: 120."),
+        maxAlwaysLoadedTokens: z
+          .number()
+          .int()
+          .positive()
+          .optional()
+          .describe("Library-wide Stage-1 token budget for `always-loaded-budget` (disabled when unset)."),
+        overlapThreshold: z
+          .number()
+          .min(0.1)
+          .max(1)
+          .optional()
+          .describe("Lexical similarity threshold (0.1-1.0) for `description-overlap`. Default: 0.65."),
+        vagueFallbacks: z
+          .array(z.string())
+          .optional()
+          .describe("Weak error-recovery phrases flagged by `vague-fallback`."),
         rules: z
           .record(z.string(), z.enum(SEVERITIES))
           .optional()
@@ -119,7 +147,9 @@ export const ConfigSchema = z
         targets: z
           .array(z.string())
           .optional()
-          .describe("Default `skanvil sync` targets: presets (claude, copilot, agents, codex) or paths."),
+          .describe(
+            "Default `skanvil sync` targets: presets (claude, copilot, agents, codex, cursor, opencode, windsurf, gemini) or paths."
+          ),
         mode: z.enum(["copy", "link"]).optional().describe("Default sync mode. Default: copy.")
       })
       .strict()
@@ -177,6 +207,14 @@ export interface ResolvedConfig {
     placeholders: string[];
     /** Line limit for the `max-lines` rule. @defaultValue {@link DEFAULT_MAX_LINES} */
     maxLines: number;
+    /** Stage-1 token budget for `description-budget`. @defaultValue {@link DEFAULT_MAX_DESCRIPTION_TOKENS} */
+    maxDescriptionTokens: number;
+    /** Optional library-wide Stage-1 token budget for `always-loaded-budget`. */
+    maxAlwaysLoadedTokens?: number;
+    /** Jaccard similarity threshold for `description-overlap`. @defaultValue {@link DEFAULT_OVERLAP_THRESHOLD} */
+    overlapThreshold: number;
+    /** Weak fallback phrases rejected by `vague-fallback`. @defaultValue {@link DEFAULT_VAGUE_FALLBACKS} */
+    vagueFallbacks: string[];
     /** Severity overrides by rule id. */
     rules: Record<string, Severity>;
   };
@@ -233,6 +271,7 @@ export const DEFAULT_REQUIRED_SECTIONS = [
   "Objective",
   "When to Activate This Skill",
   "Instructions",
+  "Error Recovery",
   "Output Format",
   "Quality Criteria"
 ];
@@ -242,6 +281,15 @@ export const DEFAULT_PLACEHOLDERS = ["TODO", "describe...", "lorem ipsum", "tbd"
 
 /** Recommended maximum SKILL.md length from the Agent Skills spec. */
 export const DEFAULT_MAX_LINES = 500;
+
+/** Default Stage-1 token budget (`name` + `description`) for `description-budget`. */
+export const DEFAULT_MAX_DESCRIPTION_TOKENS = 120;
+
+/** Default Jaccard similarity threshold for `description-overlap`. */
+export const DEFAULT_OVERLAP_THRESHOLD = 0.65;
+
+/** Default vague error-recovery phrases rejected by `vague-fallback`. */
+export const DEFAULT_VAGUE_FALLBACKS = ["try again", "retry if it fails", "retry until it works", "just retry"];
 
 function titleFromId(id: string): string {
   return id
@@ -354,6 +402,12 @@ export function resolveConfig(raw: unknown = {}): ResolvedConfig {
       requiredSections: config.validation?.requiredSections ?? DEFAULT_REQUIRED_SECTIONS,
       placeholders: config.validation?.placeholders ?? DEFAULT_PLACEHOLDERS,
       maxLines: config.validation?.maxLines ?? DEFAULT_MAX_LINES,
+      maxDescriptionTokens: config.validation?.maxDescriptionTokens ?? DEFAULT_MAX_DESCRIPTION_TOKENS,
+      ...(config.validation?.maxAlwaysLoadedTokens !== undefined
+        ? { maxAlwaysLoadedTokens: config.validation.maxAlwaysLoadedTokens }
+        : {}),
+      overlapThreshold: config.validation?.overlapThreshold ?? DEFAULT_OVERLAP_THRESHOLD,
+      vagueFallbacks: config.validation?.vagueFallbacks ?? DEFAULT_VAGUE_FALLBACKS,
       rules: config.validation?.rules ?? {}
     },
     templates: { dir: config.templates?.dir ?? ".skanvil/templates" },

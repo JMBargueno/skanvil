@@ -11,18 +11,22 @@
  */
 import { Command, Option } from "commander";
 
+import { evalExportCommand, evalRouteCommand, evalTriggersCommand } from "./commands/evals.js";
+import { feedbackListCommand, feedbackPromoteCommand } from "./commands/feedback.js";
 import {
+  buildCommand,
+  diffCommand,
   doctorCommand,
   ejectCommand,
   indexCommand,
-  buildCommand,
   initCommand,
   installSkillCommand,
+  statsCommand,
   syncCommand,
   validateCommand
 } from "./commands/library.js";
 import { isInteractive } from "./commands/shared.js";
-import { addCommand, editCommand, listCommand } from "./commands/skills.js";
+import { addCommand, editCommand, importCommand, listCommand } from "./commands/skills.js";
 import { wizardCommand } from "./commands/wizard.js";
 import { RULES } from "./core/validate.js";
 import { TARGET_PRESETS } from "./core/sync.js";
@@ -77,6 +81,7 @@ export function buildProgram(): Command {
     .option("--no-git", "skip git init")
     .option("--eject-templates", "copy the skill template into .skanvil/templates for customisation")
     .option("--no-agent-skill", "do not install the skanvil agent skill into the library")
+    .option("--no-feedback", "do not install the skanvil-feedback skill alongside skanvil")
     .option(
       "--target <name>",
       "default sync targets written to .skanvilrc.json (also where the agent skill is installed); repeatable or comma-separated (default: claude)",
@@ -112,6 +117,9 @@ export function buildProgram(): Command {
     .option("--type <category>", "move the skill to another category")
     .option("--title <value>", "new title (heading and README entry)")
     .option("--description <value>", "new description")
+    .option("--owner <value>", "set metadata.owner")
+    .option("--status <value>", "set metadata.status (draft, experimental, active, deprecated)")
+    .option("--replaced-by <skill>", "set metadata.replaced-by (implies --status deprecated)")
     .option("--remove", "delete the skill (asks for confirmation)")
     .option("--yes", "skip the confirmation prompt")
     .option("--skip-validate", "do not validate afterwards")
@@ -123,6 +131,8 @@ export function buildProgram(): Command {
     .command("list")
     .description("list skills with category, README presence, validity and description")
     .option("--category <id>", "only skills of this category")
+    .option("--status <value>", "only skills with this metadata.status")
+    .option("--owner <value>", "only skills with this metadata.owner")
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((options) => listCommand(options)));
@@ -132,6 +142,7 @@ export function buildProgram(): Command {
     .description("check library conventions and the Agent Skills spec (exit 1 on errors)")
     .option("--strict", "treat warnings as errors")
     .option("--skill <name>", "only report problems of one skill")
+    .option("--format <format>", "output format: text, github, sarif or json (default: text)")
     .addOption(cwdOption())
     .addOption(jsonOption())
     .addHelpText(
@@ -154,9 +165,70 @@ export function buildProgram(): Command {
     .command("doctor")
     .description("diagnose the library and optionally repair fixable problems")
     .option("--fix", "apply automatic fixes (README entries, name mismatch, tabs, tools -> allowed-tools)")
+    .option("--scaffold-sections", "insert minimal stubs for missing required sections (requires --fix)")
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((options) => doctorCommand(options)));
+
+  program
+    .command("stats")
+    .description("show 3-stage token and size budgets for validated skills")
+    .option("--category <id>", "only include skills of this category")
+    .option("--skill <name>", "only inspect one skill")
+    .option("--sort <key>", "sort by: tokens, lines or name (default: name)")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => statsCommand(options)));
+
+  const evalCmd = program.command("eval").description("check trigger routing and export evaluation suites");
+  evalCmd
+    .command("triggers")
+    .description("test declared triggers in evals.json against skill descriptions offline")
+    .option("--skill <name>", "only check triggers of one skill")
+    .option("--split <name>", "only check prompts tagged 'train' or 'eval'")
+    .option("--strict", "exit 1 when any trigger check fails")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => evalTriggersCommand(options)));
+  evalCmd
+    .command("export")
+    .description("export evals.json cases and triggers for external runners (JSON or Promptfoo)")
+    .option("--format <format>", "output format: json or promptfoo (default: json)")
+    .option("--ablation", "pair each case with a without-skill baseline variant")
+    .option("--skill <name>", "only export one skill")
+    .option("--split <name>", "only export items tagged 'train' or 'eval'")
+    .option("--out <file>", "write the dataset to a file instead of stdout")
+    .addOption(cwdOption())
+    .action(run((options) => evalExportCommand(options)));
+  evalCmd
+    .command("route <prompt>")
+    .description("simulate Stage-1 offline BM25 trigger routing for a user prompt")
+    .option("--top <n>", "maximum matching skills to return (default: 5)")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((prompt, options) => evalRouteCommand(prompt, options)));
+
+  const feedbackCmd = program
+    .command("feedback")
+    .description("inspect and promote friction logs from .skanvil-feedback.jsonl");
+  feedbackCmd
+    .command("list")
+    .description("summarize grouped friction entries logged by coding agents")
+    .option("--file <path>", "path to feedback JSONL file (default: .skanvil-feedback.jsonl)")
+    .option("--skill <name>", "only include entries for one skill")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => feedbackListCommand(options)));
+  feedbackCmd
+    .command("promote")
+    .description("promote validated suggestedEvalCase entries into skill evals.json files")
+    .option("--file <path>", "path to feedback JSONL file (default: .skanvil-feedback.jsonl)")
+    .option("--skill <name>", "only promote entries for one skill")
+    .option("--dry-run", "preview promotions without modifying evals.json or the log")
+    .option("--prune", "remove promoted entries from the feedback JSONL log")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => feedbackPromoteCommand(options)));
 
   const templates = program.command("templates").description("manage skill templates");
   templates
@@ -186,7 +258,11 @@ export function buildProgram(): Command {
       collect
     )
     .option("--force", "replace a 'skanvil' skill folder that skanvil did not install, or reinstall the same version")
-    .option("--global", "install into your user folders (~/.claude/skills, ~/.copilot/skills, ~/.agents/skills)")
+    .option(
+      "--global",
+      "install into your user agent folders (~/.claude/skills, ~/.cursor/skills, ~/.gemini/skills, ...)"
+    )
+    .option("--no-feedback", "do not install the skanvil-feedback skill alongside skanvil")
     .addOption(jsonOption())
     .action(run((dest, options) => installSkillCommand(dest, options)));
 
@@ -198,18 +274,46 @@ export function buildProgram(): Command {
       `preset (${Object.keys(TARGET_PRESETS).join(", ")}) or path relative to dest; repeatable or comma-separated`,
       collect
     )
-    .option("--from <pkg|path>", "skills library to install (npm package in node_modules or folder); default: --cwd")
+    .option(
+      "--from <pkg|path|git>",
+      "skills library to install (folder, installed npm package, or Git URL/github:owner/repo); default: --cwd"
+    )
     .option("--link", "symlink skills instead of copying (junctions on Windows)")
     .option("--copy", "copy skills (overrides sync.mode = link)")
     .option("--category <id>", "only skills of this category (repeatable)", collect)
     .option("--skill <name>", "only this skill (repeatable)", collect)
+    .option("--status <value>", "only skills with this metadata.status (repeatable)", collect)
+    .option("--include-deprecated", "also sync skills with metadata.status: deprecated")
     .option("--force", "also sync skills with validation errors")
     .option("--dry-run", "show what would change without writing")
     .option("--param <name=value>", "value for parametrized skills (repeatable); remembered per target", collect)
-    .option("--global", "install into your user folders (~/.claude/skills, ~/.copilot/skills, ~/.agents/skills)")
+    .option(
+      "--global",
+      "install into your user agent folders (~/.claude/skills, ~/.cursor/skills, ~/.gemini/skills, ...)"
+    )
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((dest, options) => syncCommand(dest, options)));
+
+  program
+    .command("import <sourceDir>")
+    .description("import existing skill folders into the library and normalise frontmatter")
+    .option("--type <category>", "target category id or alias (applies folder prefix and metadata)")
+    .option("--skill <name>", "only import specific skill(s) (repeatable or comma-separated)", collect)
+    .option("--dry-run", "preview what would be imported without writing")
+    .option("--overwrite", "replace existing skill folders with the same resolved name")
+    .option("--skip-validate", "do not validate after importing")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((sourceDir, options) => importCommand(sourceDir, options)));
+
+  program
+    .command("diff [baseRef]")
+    .description("compare the library against a Git ref (Stage-1 token delta, validation and trigger regressions)")
+    .option("--format <format>", "output format: text or markdown (default: text)")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((baseRef, options) => diffCommand(baseRef, options)));
 
   return program;
 }

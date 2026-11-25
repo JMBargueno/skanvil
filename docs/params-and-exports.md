@@ -52,8 +52,8 @@ Rules for `params.json`:
 - **Names** are camelCase letters and digits.
 - **Types** are `enum` (with `values`), `string` or `boolean`.
 - **Defaults** are required, so a skill always renders. An enum default must be one of its values.
-- **The file stays out of agents' folders.** `params.json` is not part of the Agent Skills spec, so
-  `sync` and `build` never copy it to them.
+- **The file stays out of agents' folders.** `params.json` (like `evals.json`) is not part of the Agent Skills spec, so `sync` and `build` never copy it to them.
+- **Eval cases can test parameter variants.** Each case in `evals.json` may specify `params`, which `skanvil validate` checks against `params.json` and `skanvil eval export` renders before exporting.
 
 ## Template syntax
 
@@ -158,7 +158,8 @@ How exports are named:
 - **Clashes** use the full folder name, for example `frontReview` and `backReview`.
 - **Names that cannot be identifiers** get a `skill` prefix, for example `skill2faSetup`.
 - **What is exported:** only publishable skills, meaning categories with `validated: true`.
-  `_internal` skills are never exported.
+  `_internal` skills are never exported. Authoring files (`params.json` and `evals.json`) are omitted from `skill.files()`.
+- **Deprecations:** if a skill sets `metadata.status: "deprecated"`, its generated `.d.mts` / `.d.cts` function declaration automatically gets a `@deprecated` JSDoc tag (referencing `metadata.replaced-by` when set).
 
 The generated code has no dependencies, not even skanvil. It embeds the same renderer that
 skanvil uses, so `codeReview({ … })` and `skanvil sync --param …` always produce the same text.

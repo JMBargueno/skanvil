@@ -2,7 +2,7 @@
 
 `skanvil add` creates a skill by copying a template folder. The built-in template contains:
 
-- `SKILL.md`, with every required section;
+- `SKILL.md`, with every required section (`Objective`, `When to Activate This Skill` including negative trigger guidance, numbered `Instructions`, an `Error Recovery` table, `Output Format` and `Quality Criteria`);
 - `references/REFERENCE.md`;
 - `scripts/example-helper.js`;
 - `assets/output-template.md`.

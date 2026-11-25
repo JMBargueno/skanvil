@@ -12,6 +12,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { listFiles } from "../util/fs.js";
+import { EVALS_FILE } from "./evals.js";
 import type { Library } from "./library.js";
 import { PARAMS_FILE, renderTemplate, resolveParamValues, type ParamDefinitions } from "./params.js";
 import { validateLibrary } from "./validate.js";
@@ -127,6 +128,8 @@ interface SkillData {
   category: string;
   title: string;
   description: string;
+  status?: string;
+  replacedBy?: string;
   params: ParamDefinitions;
   template: string;
   files: Record<string, { encoding: "utf8" | "base64"; content: string }>;
@@ -219,12 +222,17 @@ export type SkillName = ${skills.map((skill) => JSON.stringify(skill.name)).join
 `;
   const perSkill = skills.map((skill) => {
     const typeName = `${capitalize(skill.exportName)}Params`;
+    const deprecatedTag =
+      skill.status === "deprecated"
+        ? ["", `@deprecated ${skill.replacedBy ? `Use \`${skill.replacedBy}\` instead.` : "This skill is deprecated."}`]
+        : [];
     return (
       `\n${docComment([`Parameters of the \`${skill.name}\` skill.`])}export type ${typeName} = ${paramsType(skill.params)};\n\n` +
       docComment([
         `${skill.title}: ${skill.description}`,
         "",
-        `@returns The \`${skill.name}\` SKILL.md${Object.keys(skill.params).length ? ", rendered with the given parameters" : ""}.`
+        `@returns The \`${skill.name}\` SKILL.md${Object.keys(skill.params).length ? ", rendered with the given parameters" : ""}.`,
+        ...deprecatedTag
       ]) +
       `export declare function ${skill.exportName}(params?: ${typeName}): string;\n`
     );
@@ -271,18 +279,22 @@ export async function buildLibrary(library: Library, options: BuildOptions = {})
     const rendered = await library.readSkillRendered(folder);
     const files: SkillData["files"] = {};
     for (const file of await listFiles(dir)) {
-      if (file === "SKILL.md" || file === PARAMS_FILE) continue;
+      if (file === "SKILL.md" || file === PARAMS_FILE || file === EVALS_FILE) continue;
       const buffer = await fs.readFile(path.join(dir, file));
       files[file] = isText(buffer)
         ? { encoding: "utf8", content: buffer.toString("utf8") }
         : { encoding: "base64", content: buffer.toString("base64") };
     }
+    const status = rendered.getString("metadata", "status") || undefined;
+    const replacedBy = rendered.getString("metadata", "replaced-by") || undefined;
     skills.push({
       name: folder,
       exportName: names.get(folder)!,
       category: library.categories.fromFolder(folder).id,
       title: rendered.title || folder,
       description: rendered.getString("description"),
+      ...(status ? { status } : {}),
+      ...(replacedBy ? { replacedBy } : {}),
       params,
       template,
       files

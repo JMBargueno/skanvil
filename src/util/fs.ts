@@ -56,11 +56,13 @@ export async function listFiles(dir: string, relative = ""): Promise<string[]> {
  * Computes a stable hash of a folder tree. It is used by sync to detect changed skills.
  *
  * @param dir - Root folder.
- * @returns The first 16 hex characters of a SHA-256 over every relative path and file content.
+ * @param exclude - Optional relative posix paths to exclude from the hash.
+ * @returns The first 16 hex characters of a SHA-256 over every included relative path and file content.
  */
-export async function hashDirectory(dir: string): Promise<string> {
+export async function hashDirectory(dir: string, exclude?: ReadonlySet<string>): Promise<string> {
   const hash = createHash("sha256");
   for (const file of await listFiles(dir)) {
+    if (exclude?.has(file)) continue;
     hash.update(file);
     hash.update("\0");
     hash.update(await fs.readFile(path.join(dir, file)));

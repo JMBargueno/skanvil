@@ -5,6 +5,8 @@
 |- skills/            # one folder per skill, each with SKILL.md
 |  |- <skill>/
 |     |- SKILL.md
+|     |- params.json  # optional template parameters (excluded from sync/build)
+|     |- evals.json   # optional trigger & eval cases (excluded from sync/build)
 |     |- references/  # optional deep guidance
 |     |- scripts/     # optional helpers
 |     |- assets/      # optional templates

@@ -2,7 +2,7 @@
  * End-to-end tests of the real CLI: argument parsing, exit codes, text and JSON output.
  * The CLI is bundled by tests/setup/build-cli.ts and run as a child process without a TTY.
  */
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -96,21 +96,43 @@ describe("library workflow", () => {
     const dir = tmp();
     const init = skanvil(["init", "lib", "--no-git", "--json"], dir);
     expect(init.code).toBe(0);
-    expect(json<{ name: string; agentSkill: { status: string }[] }>(init)).toMatchObject({
+    expect(json<{ name: string; agentSkill: { skill: string; status: string }[] }>(init)).toMatchObject({
       name: "lib",
-      agentSkill: [{ status: "installed" }]
+      agentSkill: [
+        { skill: "skanvil", status: "installed" },
+        { skill: "skanvil-feedback", status: "installed" }
+      ]
     });
     const root = path.join(dir, "lib");
 
     const add = skanvil(
-      ["add", "--type", "back", "--name", "Queue Worker", "--description", "Runs jobs", "--json"],
+      [
+        "add",
+        "--type",
+        "back",
+        "--name",
+        "Queue Worker",
+        "--description",
+        "Runs background queue workers safely. Use when modifying async jobs.",
+        "--json"
+      ],
       root
     );
     expect(json(add)).toMatchObject({ skillName: "back-queue-worker", type: "back" });
 
-    expect(skanvil(["edit", "back-queue-worker", "--rename", "worker"], root).code).toBe(0);
-    expect(json(skanvil(["list", "--json"], root))).toEqual([
-      { name: "back-worker", type: "back", indexed: true, valid: true, description: "Runs jobs." }
+    expect(
+      skanvil(["edit", "back-queue-worker", "--rename", "worker", "--owner", "@infra", "--status", "active"], root).code
+    ).toBe(0);
+    expect(json(skanvil(["list", "--status", "active", "--owner", "@infra", "--json"], root))).toEqual([
+      {
+        name: "back-worker",
+        type: "back",
+        indexed: true,
+        valid: true,
+        status: "active",
+        owner: "@infra",
+        description: "Runs background queue workers safely. Use when modifying async jobs."
+      }
     ]);
 
     const validate = skanvil(["validate", "--json"], root);
@@ -242,7 +264,24 @@ describe("sync and install-skill", () => {
 
     const run = skanvil(["install-skill", "--target", "claude,agents", "--json"], project);
     expect(run.code).toBe(1);
-    expect(json<{ status: string }[]>(run).map((result) => result.status)).toEqual(["unchanged", "skipped"]);
+    expect(json<{ skill: string; status: string }[]>(run).map((result) => `${result.skill}:${result.status}`)).toEqual([
+      "skanvil:unchanged",
+      "skanvil-feedback:unchanged",
+      "skanvil:skipped",
+      "skanvil-feedback:installed"
+    ]);
+  });
+
+  test("init and install-skill support --no-feedback", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--no-feedback"], dir).code).toBe(0);
+    expect(fs.existsSync(path.join(dir, "lib", ".claude", "skills", "skanvil", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, "lib", ".claude", "skills", "skanvil-feedback"))).toBe(false);
+
+    const project = tmp();
+    expect(skanvil(["install-skill", "--no-feedback", "--target", "claude"], project).code).toBe(0);
+    expect(fs.existsSync(path.join(project, ".claude", "skills", "skanvil", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".claude", "skills", "skanvil-feedback"))).toBe(false);
   });
 
   test("install-skill --global writes into the home folder", () => {
@@ -254,5 +293,311 @@ describe("sync and install-skill", () => {
     });
     expect(result.status).toBe(0);
     expect(fs.existsSync(path.join(home, ".claude", "skills", "skanvil", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(home, ".claude", "skills", "skanvil-feedback", "SKILL.md"))).toBe(true);
+  });
+});
+
+describe("stats, eval and deprecation CLI", () => {
+  test("stats, eval triggers, eval export and sync --include-deprecated work end-to-end", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--no-agent-skill"], dir).code).toBe(0);
+    const root = path.join(dir, "lib");
+
+    expect(
+      skanvil(
+        [
+          "add",
+          "--type",
+          "front",
+          "--name",
+          "a11y",
+          "--description",
+          "Audits React components for WCAG ARIA labels. Use when reviewing UI modals."
+        ],
+        root
+      ).code
+    ).toBe(0);
+    expect(
+      skanvil(
+        [
+          "add",
+          "--type",
+          "back",
+          "--name",
+          "sql",
+          "--description",
+          "Audits Postgres SQL migrations for index lock risks. Use when adding migrations."
+        ],
+        root
+      ).code
+    ).toBe(0);
+
+    fs.writeFileSync(
+      path.join(root, "skills", "front-a11y", "evals.json"),
+      JSON.stringify({
+        triggers: {
+          shouldTrigger: [{ prompt: "Check React WCAG ARIA labels", split: "eval" }],
+          shouldNotTrigger: [{ prompt: "Audit Postgres SQL migrations", split: "eval" }]
+        },
+        cases: [
+          {
+            id: "a11y-case",
+            split: "eval",
+            prompt: "Audit Modal.tsx",
+            expected: ["Identifies keyboard trap"]
+          }
+        ]
+      })
+    );
+
+    const statsRun = skanvil(["stats", "--sort", "tokens", "--json"], root);
+    expect(statsRun.code).toBe(0);
+    expect(json<{ count: number; totals: { alwaysLoadedTokens: number } }>(statsRun)).toMatchObject({
+      count: 2,
+      totals: { alwaysLoadedTokens: expect.any(Number) }
+    });
+
+    const evalRun = skanvil(["eval", "triggers", "--split", "eval", "--strict", "--json"], root);
+    expect(evalRun.code).toBe(0);
+    expect(json<{ ok: boolean; passed: number; failed: number }>(evalRun)).toMatchObject({
+      ok: true,
+      passed: 2,
+      failed: 0
+    });
+
+    const outPath = path.join(tmp(), "promptfoo.json");
+    const exportRun = skanvil(["eval", "export", "--format", "promptfoo", "--ablation", "--out", outPath], root);
+    expect(exportRun.code).toBe(0);
+    expect(JSON.parse(fs.readFileSync(outPath, "utf8")).prompts).toHaveLength(2);
+
+    expect(skanvil(["edit", "back-sql", "--status", "deprecated", "--replaced-by", "front-a11y"], root).code).toBe(0);
+    const project = tmp();
+    const sync1 = skanvil(["sync", project, "--json"], root);
+    expect(sync1.code).toBe(0);
+    expect(
+      json<{ results: { added: string[]; skipped: { skill: string }[]; alwaysLoadedTokens: number }[] }>(sync1)
+        .results[0]
+    ).toMatchObject({
+      added: ["front-a11y"],
+      skipped: [{ skill: "back-sql" }],
+      alwaysLoadedTokens: expect.any(Number)
+    });
+
+    const sync2 = skanvil(["sync", project, "--include-deprecated", "--json"], root);
+    expect(sync2.code).toBe(0);
+    expect(json<{ results: { added: string[] }[] }>(sync2).results[0].added).toEqual(["back-sql"]);
+
+    // Restore back-sql active status and verify eval route + feedback CLI commands.
+    expect(skanvil(["edit", "back-sql", "--status", "active"], root).code).toBe(0);
+    const routeRun = skanvil(["eval", "route", "Audit Postgres SQL migrations", "--top", "2", "--json"], root);
+    expect(routeRun.code).toBe(0);
+    expect(json<{ candidates: { skill: string; rank: number }[] }>(routeRun).candidates[0]).toMatchObject({
+      skill: "back-sql",
+      rank: 1
+    });
+
+    const feedbackLog = path.join(root, ".skanvil-feedback.jsonl");
+    fs.writeFileSync(
+      feedbackLog,
+      `${JSON.stringify({
+        skill: "back-sql",
+        step: "Step 1",
+        symptom: "Missed CONCURRENTLY index warning",
+        proposedFix: "Check CREATE INDEX CONCURRENTLY",
+        suggestedEvalCase: {
+          id: "concurrent-index",
+          prompt: "Review migration adding index on orders",
+          expected: ["Flags missing CONCURRENTLY"]
+        }
+      })}\n`
+    );
+
+    const fbList = skanvil(["feedback", "list", "--json"], root);
+    expect(fbList.code).toBe(0);
+    expect(json<{ totalEntries: number; groups: { skill: string }[] }>(fbList)).toMatchObject({
+      totalEntries: 1,
+      groups: [{ skill: "back-sql" }]
+    });
+
+    const fbPromote = skanvil(["feedback", "promote", "--prune", "--json"], root);
+    expect(fbPromote.code).toBe(0);
+    expect(json<{ promoted: { skill: string; id: string }[]; prunedLines: number }>(fbPromote)).toMatchObject({
+      promoted: [{ skill: "back-sql", id: "concurrent-index" }],
+      prunedLines: 1
+    });
+    expect(fs.existsSync(path.join(root, "skills", "back-sql", "evals.json"))).toBe(true);
+  });
+
+  test("validate --format github|sarif and doctor --fix --scaffold-sections work end-to-end", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--no-agent-skill"], dir).code).toBe(0);
+    const root = path.join(dir, "lib");
+    expect(
+      skanvil(
+        [
+          "add",
+          "--type",
+          "front",
+          "--name",
+          "ci",
+          "--description",
+          "Checks frontend CI pipelines cleanly. Use when configuring CI workflows."
+        ],
+        root
+      ).code
+    ).toBe(0);
+
+    const skillFile = path.join(root, "skills", "front-ci", "SKILL.md");
+    const bodyWithoutRecovery = fs
+      .readFileSync(skillFile, "utf8")
+      .replace(/## Error Recovery[\s\S]*?(?=## Output Format)/, "");
+    fs.writeFileSync(skillFile, bodyWithoutRecovery);
+
+    const gh = skanvil(["validate", "--format", "github"], root);
+    expect(gh.code).toBe(1);
+    expect(gh.stdout).toContain("::error file=skills/front-ci/SKILL.md,line=1,title=required-sections::");
+
+    const sarif = skanvil(["validate", "--format", "sarif"], root);
+    expect(sarif.code).toBe(1);
+    expect(JSON.parse(sarif.stdout).version).toBe("2.1.0");
+
+    expect(skanvil(["validate", "--format", "bogus"], root).code).toBe(1);
+
+    const docRun = skanvil(["doctor", "--fix", "--scaffold-sections", "--json"], root);
+    expect(docRun.code).toBe(0);
+    expect(json<{ ok: boolean; fixes: string[] }>(docRun).fixes).toContain(
+      "front-ci: scaffolded missing section '## Error Recovery'"
+    );
+  });
+
+  test("sync supports cursor, opencode, windsurf, gemini presets and git+file --from", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--no-agent-skill"], dir).code).toBe(0);
+    const repo = path.join(dir, "lib");
+    expect(
+      skanvil(
+        [
+          "add",
+          "--type",
+          "front",
+          "--name",
+          "preset-check",
+          "--description",
+          "Checks presets cleanly across agents. Use when syncing across multiple tools."
+        ],
+        repo
+      ).code
+    ).toBe(0);
+
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Skanvil Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Skanvil Test",
+      GIT_COMMITTER_EMAIL: "test@example.com"
+    };
+    execFileSync("git", ["init"], { cwd: repo });
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "init"], { cwd: repo, env: gitEnv });
+
+    const project = tmp();
+    const spec = `git+${pathToFileURL(repo).href}`;
+    const res = skanvil(
+      ["sync", project, "--from", spec, "--target", "cursor,opencode,windsurf,gemini", "--link", "--json"],
+      tmp()
+    );
+    expect(res.code).toBe(0);
+    const payload = json<{ mode: string; results: { target: string; warnings: string[] }[] }>(res);
+    expect(payload.mode).toBe("copy");
+    expect(payload.results.map((r) => r.target)).toEqual(["cursor", "opencode", "windsurf", "gemini"]);
+    expect(payload.results[0].warnings).toContain("temporary Git source cannot be linked; copied instead");
+    expect(fs.existsSync(path.join(project, ".cursor", "skills", "front-preset-check", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".opencode", "skills", "front-preset-check", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".windsurf", "skills", "front-preset-check", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".gemini", "skills", "front-preset-check", "SKILL.md"))).toBe(true);
+  });
+
+  test("import and diff CLI commands work end-to-end", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--no-agent-skill"], dir).code).toBe(0);
+    const root = path.join(dir, "lib");
+
+    const ext = path.join(tmp(), "external-skill");
+    fs.mkdirSync(ext, { recursive: true });
+    fs.writeFileSync(
+      path.join(ext, "SKILL.md"),
+      [
+        "---",
+        "name: custom-a11y",
+        "description: Audits accessible button labels. Use when reviewing UI controls.",
+        "---",
+        "",
+        "## Objective",
+        "",
+        "Audit UI controls.",
+        "",
+        "## When to Activate This Skill",
+        "",
+        "- Use when reviewing buttons.",
+        "",
+        "## Instructions",
+        "",
+        "1. Check button text and ARIA roles.",
+        "",
+        "## Error Recovery",
+        "",
+        "| Failure | Cause | Recovery Action |",
+        "| --- | --- | --- |",
+        "| Missing label | Icon-only button | Add aria-label attribute. |",
+        "",
+        "## Output Format",
+        "",
+        "- Accessibility report.",
+        "",
+        "## Quality Criteria",
+        "",
+        "- Every interactive control has a name.",
+        ""
+      ].join("\n")
+    );
+
+    const impRun = skanvil(["import", ext, "--type", "front", "--json"], root);
+    expect(impRun.code).toBe(0);
+    expect(json<{ imported: { target: string }[] }>(impRun).imported[0].target).toBe("front-custom-a11y");
+
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Skanvil Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Skanvil Test",
+      GIT_COMMITTER_EMAIL: "test@example.com"
+    };
+    execFileSync("git", ["init"], { cwd: root });
+    execFileSync("git", ["add", "."], { cwd: root });
+    execFileSync("git", ["commit", "-m", "initial"], { cwd: root, env: gitEnv });
+
+    expect(
+      skanvil(
+        [
+          "add",
+          "--type",
+          "back",
+          "--name",
+          "events",
+          "--description",
+          "Audits event schemas. Use when changing message queues."
+        ],
+        root
+      ).code
+    ).toBe(0);
+
+    const diffJson = skanvil(["diff", "HEAD", "--json"], root);
+    expect(diffJson.code).toBe(0);
+    expect(json<{ added: { skill: string }[] }>(diffJson).added.map((e) => e.skill)).toEqual(["back-events"]);
+
+    const diffMd = skanvil(["diff", "HEAD", "--format", "markdown"], root);
+    expect(diffMd.code).toBe(0);
+    expect(diffMd.stdout).toContain("## skanvil diff (HEAD)");
+    expect(diffMd.stdout).toContain("`back-events`");
   });
 });

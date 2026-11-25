@@ -18,7 +18,7 @@ This repository is a library of reusable Agent Skills.
 
 ## Workflow
 
-- Load the `skanvil` skill (`.claude/skills/skanvil/SKILL.md`, installed by `skanvil init`; refresh it with `npx skanvil install-skill`) before changing skills: it explains every command and how to fix validation errors.
+- Load the `skanvil` skill (`.claude/skills/skanvil/SKILL.md`, installed alongside `skanvil-feedback` by `skanvil init`; refresh with `npx skanvil install-skill`) before changing skills: it explains every command and how to fix validation errors.
 - Create skills with `npx skanvil add` and modify them with `npx skanvil edit` (never rename folders by hand).
-- Run `npm test` (`skanvil validate --strict && skanvil index --check`) before committing; `npx skanvil doctor --fix` repairs most issues.
+- Run `npm test` (`skanvil validate --strict && skanvil index --check`), `npx skanvil stats`, and `npx skanvil eval triggers` before committing; `npx skanvil doctor --fix` repairs most structural issues.
 - Keep diffs focused and commit by concern (`feat:`, `fix:`, `refactor:`, `docs:`).

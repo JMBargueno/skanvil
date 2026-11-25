@@ -34,11 +34,13 @@ const FILE_ALIASES: Record<string, string> = { gitignore: ".gitignore" };
  * Keep this list in sync with the template.
  */
 export const TEMPLATE_BOILERPLATE: readonly string[] = [
-  "Confirm the relevant scope, files, and expected output with the user request.",
-  "Inspect the existing implementation or documentation before proposing changes.",
+  "Confirm the relevant scope, target files, and expected output against the user request.",
+  "Inspect the existing implementation or documentation and confirm the facts before making edits.",
   "Apply focused changes that preserve repository conventions and public behavior unless a change is explicitly required.",
-  "Run the narrowest useful validation and repair any issues introduced by the change.",
-  "Use this skill when the user requests work related to"
+  "Run the narrowest useful validation and verify every check exits cleanly before proceeding.",
+  "Use this skill when the user requests work related to",
+  "Do not activate this skill when the request is unrelated to",
+  "Inspect the error output, verify prerequisites, and report the blocking issue before proceeding."
 ];
 
 /** Template variables, keyed by placeholder name (`{{name}}`, `{{metadata.domain}}`…). */

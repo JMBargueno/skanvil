@@ -107,6 +107,7 @@ describe("outside a library", () => {
       ["front", "back"],
       ["claude", "copilot"],
       true, // agent skill
+      true, // feedback skill
       false, // git
       // now inside the new library
       "add",
@@ -129,6 +130,7 @@ describe("outside a library", () => {
       "internal"
     ]);
     expect(fs.existsSync(path.join(root, ".github", "skills", "skanvil", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(root, ".github", "skills", "skanvil-feedback", "SKILL.md"))).toBe(true);
     expect(fs.existsSync(path.join(root, ".git"))).toBe(false);
     expect(fs.readdirSync(path.join(root, "skills", "front-api-review")).sort()).toEqual(["SKILL.md", "references"]);
 
@@ -190,9 +192,18 @@ describe("outside a library", () => {
 
   test("installs the agent skill in the current folder", async () => {
     const dir = tmp();
-    await run(dir, "agent", "project", ["agents"], "exit");
+    await run(dir, "agent", "project", ["agents"], true, "exit");
     expect(fs.existsSync(path.join(dir, ".agents", "skills", "skanvil", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, ".agents", "skills", "skanvil-feedback", "SKILL.md"))).toBe(true);
     expect(text()).toMatch(/skanvil install-skill .*--target agents/);
+  });
+
+  test("can opt out of skanvil-feedback when installing agent skills", async () => {
+    const dir = tmp();
+    await run(dir, "agent", "project", ["claude"], false, "exit");
+    expect(fs.existsSync(path.join(dir, ".claude", "skills", "skanvil", "SKILL.md"))).toBe(true);
+    expect(fs.existsSync(path.join(dir, ".claude", "skills", "skanvil-feedback"))).toBe(false);
+    expect(text()).toMatch(/skanvil install-skill .*--target claude --no-feedback/);
   });
 });
 
@@ -252,5 +263,35 @@ describe("inside a library", () => {
     await run(root, "add", "front", "b", DEFAULT, "B", [], "exit");
     expect(text()).toMatch(/✖ README closing <\/details> tag not found/);
     expect(prompts.asked.filter((message) => /What do you want to do/.test(message))).toHaveLength(2);
+  });
+
+  test("runs stats and eval triggers and supports lifecycle actions in edit", async () => {
+    const root = await library();
+    await scaffoldSkill(root, { type: "front", name: "b", description: "Reviews UI layout. Use when editing views." });
+    await run(
+      root,
+      "edit",
+      "front-a",
+      "owner",
+      "@ui-team",
+      "edit",
+      "front-a",
+      "status",
+      "active",
+      "edit",
+      "front-a",
+      "deprecate",
+      "front-b",
+      "stats",
+      "eval",
+      "exit"
+    );
+    const out = text();
+    expect(out).toMatch(/skanvil edit front-a .*--owner @ui-team/);
+    expect(out).toMatch(/skanvil edit front-a .*--status active/);
+    expect(out).toMatch(/skanvil edit front-a .*--replaced-by front-b/);
+    expect(out).toMatch(/skanvil stats/);
+    expect(out).toMatch(/skanvil eval triggers/);
+    expect(fs.readFileSync(path.join(root, "skills", "front-a", "SKILL.md"), "utf8")).toMatch(/replaced-by: front-b/);
   });
 });

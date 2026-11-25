@@ -14,22 +14,26 @@ Add the schema reference for completion and inline docs in your editor:
 
 ## Top-level fields
 
-| Field                         | Type                                       | Default                                                      | Description                                                   |
-| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------ | ------------------------------------------------------------- |
-| `name`                        | string                                     | —                                                            | Library name (informational).                                 |
-| `scope`                       | string                                     | —                                                            | npm scope without `@` (informational).                        |
-| `skillsDir`                   | string                                     | `"skills"`                                                   | Folder holding the skills.                                    |
-| `readme`                      | string                                     | `"README.md"`                                                | File holding the skills index.                                |
-| `categories`                  | Category[]                                 | default preset                                               | Replaces the default preset entirely when set.                |
-| `validation.requiredSections` | string[]                                   | 5 sections, see below                                        | `## Headings` every SKILL.md must contain (case-insensitive). |
-| `validation.placeholders`     | string[]                                   | `TODO`, `describe...`, `lorem ipsum`, `tbd`, `to be defined` | Forbidden text.                                               |
-| `validation.maxLines`         | number                                     | `500`                                                        | Limit used by the `max-lines` rule.                           |
-| `validation.rules`            | `{ [ruleId]: "error" \| "warn" \| "off" }` | `{}`                                                         | Severity overrides, see [Validation](validation.md).          |
-| `templates.dir`               | string                                     | `".skanvil/templates"`                                       | Folder with custom templates, see [Templates](templates.md).  |
-| `sync.targets`                | string[]                                   | `[]` (falls back to `claude`)                                | Default targets of `skanvil sync`.                            |
-| `sync.mode`                   | `"copy"` \| `"link"`                       | `"copy"`                                                     | Default sync mode.                                            |
+| Field                              | Type                                       | Default                                                                        | Description                                                                                                                    |
+| ---------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| `name`                             | string                                     | —                                                                              | Library name (informational).                                                                                                  |
+| `scope`                            | string                                     | —                                                                              | npm scope without `@` (informational).                                                                                         |
+| `skillsDir`                        | string                                     | `"skills"`                                                                     | Folder holding the skills.                                                                                                     |
+| `readme`                           | string                                     | `"README.md"`                                                                  | File holding the skills index.                                                                                                 |
+| `categories`                       | Category[]                                 | default preset                                                                 | Replaces the default preset entirely when set.                                                                                 |
+| `validation.requiredSections`      | string[]                                   | 6 sections, see below                                                          | `## Headings` every SKILL.md must contain (case-insensitive).                                                                  |
+| `validation.placeholders`          | string[]                                   | `TODO`, `describe...`, `lorem ipsum`, `tbd`, `to be defined`                   | Forbidden text.                                                                                                                |
+| `validation.maxLines`              | number                                     | `500`                                                                          | Limit used by the `max-lines` rule.                                                                                            |
+| `validation.maxDescriptionTokens`  | number                                     | `120`                                                                          | Estimated Stage-1 token budget (`name` + `description`).                                                                       |
+| `validation.maxAlwaysLoadedTokens` | number                                     | —                                                                              | Optional library-wide Stage-1 token limit for `always-loaded-budget`.                                                          |
+| `validation.overlapThreshold`      | number (`0.1`–`1`)                         | `0.65`                                                                         | Jaccard similarity threshold for `description-overlap`.                                                                        |
+| `validation.vagueFallbacks`        | string[]                                   | `"try again"`, `"retry if it fails"`, `"retry until it works"`, `"just retry"` | Weak error-recovery phrases rejected by `vague-fallback`.                                                                      |
+| `validation.rules`                 | `{ [ruleId]: "error" \| "warn" \| "off" }` | `{}`                                                                           | Severity overrides, see [Validation](validation.md).                                                                           |
+| `templates.dir`                    | string                                     | `".skanvil/templates"`                                                         | Folder with custom templates, see [Templates](templates.md).                                                                   |
+| `sync.targets`                     | string[]                                   | `[]` (falls back to `claude`)                                                  | Default `skanvil sync` targets (`claude`, `copilot`, `agents`, `codex`, `cursor`, `opencode`, `windsurf`, `gemini`, or paths). |
+| `sync.mode`                        | `"copy"` \| `"link"`                       | `"copy"`                                                                       | Default sync mode.                                                                                                             |
 
-The default required sections are `Objective`, `When to Activate This Skill`, `Instructions`, `Output Format` and `Quality Criteria`.
+The default required sections are `Objective`, `When to Activate This Skill`, `Instructions`, `Error Recovery`, `Output Format` and `Quality Criteria`.
 
 ## Categories
 
@@ -121,6 +125,48 @@ A single category means no prefixes and one README section:
     "requiredSections": ["Instructions"],
     "placeholders": ["TODO"],
     "rules": { "max-lines": "off", "metadata-format": "off", "tools-field": "error" }
+  }
+}
+```
+
+### Strict quality, security and governance library
+
+```json
+{
+  "validation": {
+    "maxDescriptionTokens": 100,
+    "maxAlwaysLoadedTokens": 2500,
+    "overlapThreshold": 0.6,
+    "rules": {
+      "no-secrets": "error",
+      "no-local-paths": "error",
+      "duplicate-trigger": "error",
+      "description-budget": "error",
+      "description-overlap": "error",
+      "error-recovery-table": "error",
+      "evals-required": "error",
+      "owner-required": "warn"
+    }
+  }
+}
+```
+
+### Gradual migration from v1.x
+
+```json
+{
+  "validation": {
+    "requiredSections": [
+      "Objective",
+      "When to Activate This Skill",
+      "Instructions",
+      "Output Format",
+      "Quality Criteria"
+    ],
+    "rules": {
+      "description-triggers": "off",
+      "numbered-steps": "off"
+    }
   }
 }
 ```

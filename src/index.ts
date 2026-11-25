@@ -22,7 +22,9 @@
  */
 export {
   AGENT_SKILL_NAME,
+  FEEDBACK_SKILL_NAME,
   agentSkillSource,
+  feedbackSkillSource,
   installAgentSkill,
   type AgentSkillResult,
   type InstallAgentSkillOptions
@@ -33,15 +35,76 @@ export {
   CONFIG_FILE,
   ConfigSchema,
   DEFAULT_CATEGORIES,
+  DEFAULT_MAX_DESCRIPTION_TOKENS,
+  DEFAULT_OVERLAP_THRESHOLD,
+  DEFAULT_VAGUE_FALLBACKS,
+  SKILL_STATUSES,
   configJsonSchema,
   loadConfig,
   resolveConfig,
   type Category,
   type RawConfig,
   type ResolvedConfig,
-  type Severity
+  type Severity,
+  type SkillStatus
 } from "./core/config.js";
-export { doctor, type DoctorResult } from "./core/doctor.js";
+export {
+  diffLibrary,
+  formatDiffMarkdown,
+  type DiffOptions,
+  type LibraryDiffResult,
+  type SkillDiffEntry,
+  type TriggerRegression,
+  type ValidationRegression
+} from "./core/diff.js";
+export { doctor, type DoctorOptions, type DoctorResult } from "./core/doctor.js";
+export {
+  EVALS_FILE,
+  EVAL_SPLITS,
+  EvalsFileSchema,
+  checkTriggerRouting,
+  exportEvalDataset,
+  parseEvals,
+  readEvals,
+  routePrompt,
+  type EvalCase,
+  type EvalExportFormat,
+  type EvalSplit,
+  type ExportEvalOptions,
+  type ExportEvalResult,
+  type RouteCandidate,
+  type RoutePromptOptions,
+  type RoutePromptResult,
+  type SkillEvals,
+  type SplitSummary,
+  type TriggerCheckItem,
+  type TriggerCheckOptions,
+  type TriggerCheckResult,
+  type TriggerEntry
+} from "./core/evals.js";
+export {
+  FEEDBACK_FILE,
+  promoteFeedback,
+  readFeedbackLog,
+  summarizeFeedback,
+  type FeedbackEntry,
+  type FeedbackGroup,
+  type FeedbackReadResult,
+  type FeedbackSuggestedEvalCase,
+  type FeedbackSummary,
+  type InvalidFeedbackLine,
+  type PromoteFeedbackOptions,
+  type PromoteFeedbackResult,
+  type PromotedCase,
+  type SkippedFeedback,
+  type SummarizeFeedbackOptions
+} from "./core/feedback.js";
+export {
+  importSkills,
+  type ImportSkillsOptions,
+  type ImportSkillsResult,
+  type ImportedSkillItem
+} from "./core/import.js";
 export { createLibrary, parseProfile, type CreateLibraryOptions } from "./core/init.js";
 export { Library, type SkillInfo } from "./core/library.js";
 export {
@@ -60,16 +123,55 @@ export { rebuildIndex, reconcileIndex } from "./core/reindex.js";
 export { SkillFile } from "./core/skill.js";
 export { editSkill, removeSkill, scaffoldSkill, type AddSkillOptions, type EditSkillOptions } from "./core/skills.js";
 export {
+  analyzeLibraryStats,
+  type BodyStats,
+  type LibraryStats,
+  type ResourceStats,
+  type SkillStats,
+  type StageStats,
+  type StatsOptions
+} from "./core/stats.js";
+export {
   MANIFEST_FILE,
   TARGET_PRESETS,
   USER_TARGET_PRESETS,
+  parseGitSource,
+  resolveSource,
+  resolveSourceHandle,
   resolveTarget,
   syncSkills,
+  type InstalledSkillEntry,
+  type ManifestSourceEntry,
+  type ManifestV2,
+  type ParsedGitSource,
   type ResolveTargetOptions,
+  type ResolvedSourceHandle,
   type SyncOptions,
   type TargetResult,
   type TargetScope
 } from "./core/sync.js";
 export { ejectSkillTemplate, resolveSkillTemplate } from "./core/templates.js";
-export { RULES, formatDiagnostic, validateLibrary, type Diagnostic, type ValidationResult } from "./core/validate.js";
-export { collectSkills, type ListedSkill } from "./commands/skills.js";
+export {
+  estimateTokens,
+  extractSection,
+  jaccardSimilarity,
+  stripFencedCode,
+  tokenizeForSimilarity
+} from "./core/text.js";
+export {
+  RULES,
+  findBrokenReferences,
+  findUnusedResources,
+  formatDiagnostic,
+  validateLibrary,
+  type Diagnostic,
+  type RuleDefinition,
+  type ValidationResult
+} from "./core/validate.js";
+export {
+  formatGitHubAnnotations,
+  formatSarif,
+  resolveDiagnosticFile,
+  type ValidateOutputFormat
+} from "./core/validate-format.js";
+export { collectSkills, type ListFilterOptions, type ListedSkill } from "./commands/skills.js";

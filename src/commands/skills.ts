@@ -5,8 +5,11 @@
  *
  * @module
  */
+import path from "node:path";
 import { confirm, input, select } from "@inquirer/prompts";
 
+import { SKILL_STATUSES } from "../core/config.js";
+import { importSkills } from "../core/import.js";
 import type { Library } from "../core/library.js";
 import { editSkill, removeSkill, scaffoldSkill } from "../core/skills.js";
 import { validateLibrary } from "../core/validate.js";
@@ -106,6 +109,12 @@ export interface EditOptions extends CommonOptions {
   title?: string;
   /** `--description`: new description. */
   description?: string;
+  /** `--owner`: metadata owner. */
+  owner?: string;
+  /** `--status`: metadata status. */
+  status?: string;
+  /** `--replaced-by`: replacement skill folder. */
+  replacedBy?: string;
   /** `--remove`: delete the skill. */
   remove?: boolean;
   /** `--yes`: skip the delete confirmation. */
@@ -155,6 +164,20 @@ export async function editCommand(skillName: string, options: EditOptions): Prom
 export interface ListOptions extends CommonOptions {
   /** `--category`: only list this category (id or alias). */
   category?: string;
+  /** `--status`: only list skills with this `metadata.status`. */
+  status?: string;
+  /** `--owner`: only list skills with this `metadata.owner`. */
+  owner?: string;
+}
+
+/** Filters accepted by {@link collectSkills}. */
+export interface ListFilterOptions {
+  /** Category id or alias. */
+  category?: string;
+  /** Lifecycle status (`draft`, `experimental`, `active`, `deprecated`). */
+  status?: string;
+  /** Owner (`metadata.owner`, matched case-insensitively). */
+  owner?: string;
 }
 
 /** A row of `skanvil list` (also its `--json` output). */
@@ -167,19 +190,33 @@ export interface ListedSkill {
   indexed: boolean | null;
   /** Free of skill-level validation errors; `null` for non-validated categories. */
   valid: boolean | null;
+  /** Optional `metadata.status` value when set. */
+  status?: string;
+  /** Optional `metadata.owner` value when set. */
+  owner?: string;
+  /** Optional `metadata.replaced-by` value when set. */
+  replacedBy?: string;
   /** Frontmatter description collapsed to one line. */
   description: string;
 }
 
 /**
- * Collects the category, README presence, validity and description of every skill folder.
+ * Collects the category, README presence, validity, lifecycle metadata and description of every
+ * matching skill folder.
  *
  * @param library - Library to list.
- * @param category - Optional category id or alias to filter by.
+ * @param filter - Optional category string or {@link ListFilterOptions}.
  * @returns One row per skill folder, sorted by name.
- * @throws Error when `category` is unknown.
+ * @throws Error when `category` or `status` is unknown.
  */
-export async function collectSkills(library: Library, category?: string): Promise<ListedSkill[]> {
+export async function collectSkills(library: Library, filter?: string | ListFilterOptions): Promise<ListedSkill[]> {
+  const opts: ListFilterOptions = typeof filter === "string" ? { category: filter } : (filter ?? {});
+  const statusFilter = opts.status ? opts.status.trim().toLowerCase() : undefined;
+  if (statusFilter && !(SKILL_STATUSES as readonly string[]).includes(statusFilter)) {
+    throw new Error(`Invalid status '${opts.status}'. Allowed values: ${SKILL_STATUSES.join(", ")}.`);
+  }
+  const ownerFilter = opts.owner ? opts.owner.trim().toLowerCase() : undefined;
+
   const readme = await library.readReadmeOrEmpty();
   const documented = new Set<string>();
   for (const names of library.documentedByCategory(readme.text).values())
@@ -193,18 +230,37 @@ export async function collectSkills(library: Library, category?: string): Promis
       )
       .map((diagnostic) => diagnostic.skill!)
   );
-  const filter = category ? library.categories.resolve(category).id : null;
+  const categoryFilter = opts.category ? library.categories.resolve(opts.category).id : null;
 
   const skills: ListedSkill[] = [];
   for (const name of await library.listSkillFolders()) {
     const cat = library.categories.fromFolder(name);
-    if (filter && cat.id !== filter) continue;
+    if (categoryFilter && cat.id !== categoryFilter) continue;
     const info = await library.describeSkill(name);
+
+    let status = "";
+    let owner = "";
+    let replacedBy = "";
+    try {
+      const skill = await library.readSkillRendered(name).catch(() => library.readSkill(name));
+      status = skill.getString("metadata", "status");
+      owner = skill.getString("metadata", "owner");
+      replacedBy = skill.getString("metadata", "replaced-by");
+    } catch {
+      // Unreadable or missing SKILL.md.
+    }
+
+    if (statusFilter && status.toLowerCase() !== statusFilter) continue;
+    if (ownerFilter && owner.toLowerCase() !== ownerFilter) continue;
+
     skills.push({
       name,
       type: cat.id,
       indexed: cat.indexed ? documented.has(name) : null,
       valid: cat.validated ? !invalid.has(name) : null,
+      ...(status ? { status } : {}),
+      ...(owner ? { owner } : {}),
+      ...(replacedBy ? { replacedBy } : {}),
       description: info.description.replace(/\s+/g, " ").trim()
     });
   }
@@ -224,7 +280,11 @@ function mark(value: boolean | null): string {
  */
 export async function listCommand(options: ListOptions): Promise<number> {
   const library = await openLibrary(options);
-  const skills = await collectSkills(library, options.category);
+  const skills = await collectSkills(library, {
+    category: options.category,
+    status: options.status,
+    owner: options.owner
+  });
   if (options.json) {
     console.log(JSON.stringify(skills, null, 2));
     return 0;
@@ -234,20 +294,100 @@ export async function listCommand(options: ListOptions): Promise<number> {
     return 0;
   }
 
+  const showStatus = skills.some((skill) => Boolean(skill.status));
+  const showOwner = skills.some((skill) => Boolean(skill.owner));
   const width = Math.max(5, ...skills.map((skill) => skill.name.length));
   const typeWidth = Math.max(4, ...skills.map((skill) => skill.type.length));
-  const maxDescription = Math.max(20, (process.stdout.columns || 120) - width - typeWidth - 26);
-  console.log(
-    `${"SKILL".padEnd(width)}  ${"TYPE".padEnd(typeWidth)}  ${"IN README".padEnd(9)}  ${"VALID".padEnd(5)}  DESCRIPTION`
-  );
+  const statusWidth = showStatus ? Math.max(6, ...skills.map((skill) => (skill.status ?? "-").length)) : 0;
+  const ownerWidth = showOwner ? Math.max(5, ...skills.map((skill) => (skill.owner ?? "-").length)) : 0;
+  const extraWidth = (showStatus ? statusWidth + 2 : 0) + (showOwner ? ownerWidth + 2 : 0);
+  const maxDescription = Math.max(20, (process.stdout.columns || 120) - width - typeWidth - extraWidth - 26);
+
+  const header = [
+    "SKILL".padEnd(width),
+    "TYPE".padEnd(typeWidth),
+    "IN README".padEnd(9),
+    "VALID".padEnd(5),
+    ...(showStatus ? ["STATUS".padEnd(statusWidth)] : []),
+    ...(showOwner ? ["OWNER".padEnd(ownerWidth)] : []),
+    "DESCRIPTION"
+  ].join("  ");
+  console.log(header);
   for (const skill of skills) {
-    const description =
-      skill.description.length > maxDescription
-        ? `${skill.description.slice(0, maxDescription - 1)}…`
+    const rawDescription =
+      skill.status === "deprecated" && skill.replacedBy
+        ? `[deprecated -> ${skill.replacedBy}] ${skill.description}`
         : skill.description;
+    const description =
+      rawDescription.length > maxDescription ? `${rawDescription.slice(0, maxDescription - 1)}…` : rawDescription;
     console.log(
-      `${skill.name.padEnd(width)}  ${skill.type.padEnd(typeWidth)}  ${mark(skill.indexed).padEnd(9)}  ${mark(skill.valid).padEnd(5)}  ${description}`
+      [
+        skill.name.padEnd(width),
+        skill.type.padEnd(typeWidth),
+        mark(skill.indexed).padEnd(9),
+        mark(skill.valid).padEnd(5),
+        ...(showStatus ? [(skill.status ?? "-").padEnd(statusWidth)] : []),
+        ...(showOwner ? [(skill.owner ?? "-").padEnd(ownerWidth)] : []),
+        description
+      ].join("  ")
     );
   }
   return 0;
+}
+
+/** Options of `skanvil import`. */
+export interface ImportOptions extends CommonOptions {
+  /** `--type`: category id or alias to apply when importing skills. */
+  type?: string;
+  /** `--skill`: only import specific skill(s). */
+  skill?: string[];
+  /** `--dry-run`: preview imports without modifying files. */
+  dryRun?: boolean;
+  /** `--overwrite`: replace existing skills of the same name. */
+  overwrite?: boolean;
+  /** `--skip-validate`: skip validation after importing. */
+  skipValidate?: boolean;
+}
+
+/**
+ * `skanvil import <sourceDir>`: imports existing skill folders into the library, normalising
+ * frontmatter, updating the README index, and validating afterwards.
+ *
+ * @param sourceDir - Folder of skill directories or a single skill folder with `SKILL.md`.
+ * @param options - Parsed CLI options.
+ * @returns Exit code (`0` on success, `1` when post-import validation finds errors).
+ */
+export async function importCommand(sourceDir: string, options: ImportOptions): Promise<number> {
+  const library = await openLibrary(options);
+  const out = new Output("import", options.json);
+  const skills = (options.skill ?? [])
+    .flatMap((value) => value.split(","))
+    .map((value) => value.trim())
+    .filter(Boolean);
+
+  const result = await importSkills(library, path.resolve(sourceDir), {
+    type: options.type,
+    skills: skills.length > 0 ? skills : undefined,
+    dryRun: options.dryRun,
+    overwrite: options.overwrite
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(result, null, 2));
+    return 0;
+  }
+
+  const prefix = result.dryRun ? "(dry run) " : "";
+  for (const item of result.imported) {
+    const note = item.changes.length > 0 ? ` (${item.changes.join(", ")})` : "";
+    const tag = item.status === "overwritten" ? "~" : "+";
+    out.print(`   ${tag} ${item.target} [${item.type}]${note}`);
+  }
+  for (const item of result.skipped) {
+    out.warn(`   skipped ${item.target}: ${item.reason}`);
+  }
+  out.success(`${prefix}Imported ${result.imported.length} skill(s), skipped ${result.skipped.length}.`);
+
+  if (result.dryRun || result.imported.length === 0) return 0;
+  return validateAfter(library, "import", options.skipValidate);
 }

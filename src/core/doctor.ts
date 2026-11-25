@@ -3,12 +3,54 @@
  *
  * @module
  */
-import { isSeq } from "yaml";
-
 import type { Library } from "./library.js";
-import { KEBAB_CASE_PATTERN } from "./naming.js";
+import { escapeRegex, KEBAB_CASE_PATTERN } from "./naming.js";
 import { reconcileIndex } from "./reindex.js";
+import { convertToolsField } from "./skills.js";
 import { validateLibrary, type ValidationResult } from "./validate.js";
+
+/** Options of {@link doctor}. */
+export interface DoctorOptions {
+  /** Apply automatic repairs. @defaultValue `false` */
+  fix?: boolean;
+  /** Insert minimal scaffold stubs for missing configured `requiredSections` (requires `fix: true`). @defaultValue `false` */
+  scaffoldSections?: boolean;
+}
+
+const ERROR_RECOVERY_STUB = [
+  "## Error Recovery",
+  "",
+  "| Failure | Cause | Recovery Action |",
+  "| --- | --- | --- |",
+  "| Expected command or check fails | Missing prerequisites or unexpected repository state | Inspect the error output, verify prerequisites, and report the blocking issue before proceeding. |"
+].join("\n");
+
+function buildSectionStub(section: string): string {
+  const lower = section.trim().toLowerCase();
+  if (lower === "error recovery") return ERROR_RECOVERY_STUB;
+  if (lower === "instructions") {
+    return [
+      `## ${section}`,
+      "",
+      "1. Inspect the relevant target files and prerequisites before making edits.",
+      "2. Apply focused changes and run the narrowest verification check."
+    ].join("\n");
+  }
+  return `## ${section}\n\n- Document concrete requirements for ${section.toLowerCase()} here.`;
+}
+
+function insertSectionBlock(body: string, section: string, block: string): string {
+  if (section.trim().toLowerCase() === "error recovery") {
+    const match = body.match(/^##\s+Output Format\s*$/im);
+    if (match && match.index !== undefined) {
+      const before = body.slice(0, match.index).replace(/\n+$/, "");
+      const after = body.slice(match.index);
+      return before ? `${before}\n\n${block}\n\n${after}` : `${block}\n\n${after}`;
+    }
+  }
+  const trimmed = body.replace(/\s+$/, "");
+  return trimmed ? `${trimmed}\n\n${block}\n` : `${block}\n`;
+}
 
 /** Result of {@link doctor}. */
 export interface DoctorResult {
@@ -50,14 +92,7 @@ async function fixSkill(library: Library, folder: string, rules: Set<string>): P
     fixes.push(`${folder}: set frontmatter name to the folder name`);
   }
 
-  if (rules.has("tools-field")) {
-    const node = skill.doc!.get("tools", true);
-    const tools = isSeq(node)
-      ? (node.toJSON() as unknown[]).map(String)
-      : String(skill.getString("tools")).split(/[\s,]+/);
-    const value = tools.filter(Boolean).join(" ");
-    skill.delete(["tools"]);
-    if (value && !skill.has("allowed-tools")) skill.set(["allowed-tools"], value);
+  if (rules.has("tools-field") && convertToolsField(skill)) {
     fixes.push(`${folder}: converted tools to allowed-tools`);
   }
 
@@ -86,19 +121,42 @@ async function fixSkill(library: Library, folder: string, rules: Set<string>): P
  * if (after!.errors > 0) process.exitCode = 1;
  * ```
  */
-export async function doctor(library: Library, options: { fix?: boolean } = {}): Promise<DoctorResult> {
+export async function doctor(library: Library, options: DoctorOptions = {}): Promise<DoctorResult> {
+  if (options.scaffoldSections && !options.fix) {
+    throw new Error("--scaffold-sections requires --fix.");
+  }
   const before = await validateLibrary(library);
   if (!options.fix) return { before, fixes: [] };
 
   const fixes: string[] = [];
   const bySkill = new Map<string, Set<string>>();
+  const missingSectionsSkills = new Set<string>();
   for (const diagnostic of before.diagnostics) {
+    if (options.scaffoldSections && diagnostic.rule === "required-sections" && diagnostic.skill) {
+      missingSectionsSkills.add(diagnostic.skill);
+    }
     if (!diagnostic.fixable || !diagnostic.skill || diagnostic.rule.startsWith("readme-")) continue;
     if (!bySkill.has(diagnostic.skill)) bySkill.set(diagnostic.skill, new Set());
     bySkill.get(diagnostic.skill)!.add(diagnostic.rule);
   }
   for (const [folder, rules] of bySkill) {
     fixes.push(...(await fixSkill(library, folder, rules)));
+  }
+
+  if (options.scaffoldSections) {
+    for (const folder of missingSectionsSkills) {
+      const skill = await library.readSkill(folder);
+      if (!skill.isValidYaml) continue;
+      let changed = false;
+      for (const section of library.config.validation.requiredSections) {
+        const headingPattern = new RegExp(`^##\\s+${escapeRegex(section)}\\s*$`, "im");
+        if (headingPattern.test(skill.body)) continue;
+        skill.body = insertSectionBlock(skill.body, section, buildSectionStub(section));
+        fixes.push(`${folder}: scaffolded missing section '## ${section}'`);
+        changed = true;
+      }
+      if (changed) await library.writeSkill(folder, skill);
+    }
   }
 
   if (before.diagnostics.some((diagnostic) => diagnostic.rule.startsWith("readme-"))) {

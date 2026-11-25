@@ -12,12 +12,13 @@
 
 skanvil is a CLI and Node.js library for teams that maintain a shared set of agent skills, such as a frontend review checklist, a backend migration playbook or an internal release workflow. Each skill lives in its own `SKILL.md`. skanvil handles the repetitive work around them:
 
-- **Scaffolds** new skills from templates, with the right folder prefix, frontmatter and README entry.
-- **Keeps everything in sync** when you rename, re-categorise or delete a skill.
-- **Validates** every skill against the Agent Skills spec and your own conventions, locally or in CI.
-- **Installs** the skills into the folders that coding agents read (`.claude/skills`, `.github/skills`, `.agents/skills`), in any project.
-- **Adapts and exports skills.** Optional parameters (`{{ticketTracker}}`, `{{#if …}}`) make one skill fit every team, and `skanvil build` turns the library into a typed npm package: `import { codeReview } from "@acme/skills"`.
-- **Teaches agents to use it.** skanvil ships its own `skanvil` agent skill, so Claude Code, Copilot or Codex working in your library run the CLI correctly instead of editing folders and the README by hand.
+- **Scaffolds and imports** skills from templates (with category prefix, frontmatter, `Error Recovery` table and README entry) or bulk-imports existing folders via `skanvil import`.
+- **Keeps everything in sync** when you rename, re-categorise, set `owner`/`status`, deprecate or delete a skill, and reviews PR impact with `skanvil diff`.
+- **Validates and measures** every skill against the Agent Skills spec, security checks (`no-secrets`, `no-local-paths`), quality lint rules, duplicate-trigger detection, and 3-stage token budgets (`skanvil stats`), locally or in CI (`--format github`, `--format sarif`).
+- **Tests triggers and exports evals.** Simulate routing live with `skanvil eval route`, check `evals.json` triggers offline with `skanvil eval triggers`, promote agent feedback with `skanvil feedback promote`, and export datasets (including `--ablation` baselines for Promptfoo) with `skanvil eval export`.
+- **Installs** publishable (non-deprecated) skills across multiple coexisting libraries (`.claude/skills`, `.github/skills`, `.agents/skills`, `.cursor/skills`, `.opencode/skills`, `.windsurf/skills`, `.gemini/skills`) from local folders, npm packages, or Git URLs (`github:org/repo[#ref]`), reporting combined `alwaysLoadedTokens` per target.
+- **Adapts and exports skills.** Optional parameters (`{{ticketTracker}}`, `{{#if …}}`) make one skill fit every team, and `skanvil build` turns the library into a typed npm package (`import { codeReview } from "@acme/skills"` with `@deprecated` JSDoc where marked).
+- **Teaches agents and captures friction.** skanvil ships `skanvil` (CLI usage) and `skanvil-feedback` (structured `.skanvil-feedback.jsonl` friction reports), so coding agents maintain your library correctly and surface stale instructions.
 
 ## What is a skills library?
 
@@ -28,11 +29,15 @@ my-skills/
 ├── skills/
 │   ├── front-api-review/      # one folder per skill
 │   │   ├── SKILL.md           # YAML frontmatter + instructions
+│   │   ├── params.json        # optional parameters (excluded from sync/build)
+│   │   ├── evals.json         # optional triggers & cases (excluded from sync/build)
 │   │   ├── references/        # optional long-form guidance
 │   │   ├── scripts/           # optional helpers
 │   │   └── assets/            # optional templates
 │   └── back-migrations/
-├── .claude/skills/skanvil/    # the skanvil agent skill, installed by `init`
+├── .claude/skills/
+│   ├── skanvil/               # CLI usage skill, installed by `init`
+│   └── skanvil-feedback/      # friction-reporting skill, installed by `init`
 ├── README.md                  # human-readable index, maintained by skanvil
 └── .skanvilrc.json            # categories, validation rules, sync targets
 ```
@@ -76,9 +81,11 @@ npx skanvil init my-skills --scope acme
 cd my-skills && npm install
 
 npx skanvil add --type front --name "API review" \
-  --description "Reviews API integration changes for error handling and typing."
-npx skanvil edit front-api-review --rename http-review --type back
+  --description "Reviews API integration changes for error handling and typing. Use when modifying HTTP clients."
+npx skanvil edit front-api-review --rename http-review --type back --owner "@backend-platform"
 npx skanvil list
+npx skanvil stats --sort tokens
+npx skanvil eval triggers --strict
 npx skanvil validate --strict
 ```
 
@@ -93,26 +100,37 @@ cd my-app
 npm install --save-dev @acme/my-skills skanvil
 npx skanvil sync --from @acme/my-skills --target claude
 
-# or for every project on your machine (~/.claude/skills, ~/.copilot/skills, ~/.agents/skills)
+# or from a Git repository
+npx skanvil sync --from github:acme/my-skills#v1 --target cursor,claude
+
+# or for every project on your machine (~/.claude/skills, ~/.cursor/skills, ~/.gemini/skills, ...)
 npx skanvil sync -C ./my-skills --global --target claude,copilot
 ```
 
 ## Commands
 
-| Command                        | What it does                                                                      |
-| ------------------------------ | --------------------------------------------------------------------------------- |
-| `skanvil` / `skanvil wizard`   | Interactive assistant (in a terminal; without one, `skanvil` prints the help).    |
-| `skanvil init [dir]`           | Create a new library.                                                             |
-| `skanvil add`                  | Create a skill from a template and index it (interactive if options are missing). |
-| `skanvil edit <skill>`         | Rename, re-categorise, retitle, redescribe or remove a skill. Transactional.      |
-| `skanvil list`                 | Table of skills with category, README presence, validity and description.         |
-| `skanvil validate`             | Check the spec and conventions. Exits 1 on errors.                                |
-| `skanvil index`                | Regenerate the README index (`--check` for CI).                                   |
-| `skanvil doctor`               | Diagnose problems; `--fix` repairs what it can.                                   |
-| `skanvil templates eject`      | Copy the skill template into the library to customise it.                         |
-| `skanvil sync [dest]`          | Install skills into agent folders of a project.                                   |
-| `skanvil install-skill [dest]` | Install or update the `skanvil` agent skill in a project.                         |
-| `skanvil build`                | Generate the library's typed npm exports, one function per skill.                 |
+| Command                        | What it does                                                                                  |
+| ------------------------------ | --------------------------------------------------------------------------------------------- |
+| `skanvil` / `skanvil wizard`   | Interactive assistant (in a terminal; without one, `skanvil` prints the help).                |
+| `skanvil init [dir]`           | Create a new library.                                                                         |
+| `skanvil add`                  | Create a skill from a template and index it (interactive if options are missing).             |
+| `skanvil import <sourceDir>`   | Bulk-import existing skill folders, normalise frontmatter, and index them.                    |
+| `skanvil edit <skill>`         | Rename, re-categorise, retitle, redescribe, set owner/status or remove a skill.               |
+| `skanvil list`                 | Table of skills with category, README presence, validity, lifecycle status and summary.       |
+| `skanvil validate`             | Check the spec, security rules, quality rules, evals and conventions (`--format` for CI).     |
+| `skanvil diff [baseRef]`       | Compare the working library against a Git ref (Stage-1 token delta, validation, regressions). |
+| `skanvil index`                | Regenerate the README index (`--check` for CI).                                               |
+| `skanvil doctor`               | Diagnose problems; `--fix` repairs what it can (`--scaffold-sections` stubs missing headers). |
+| `skanvil stats`                | Report 3-stage token and line budgets (`name` + `description`, body, resources).              |
+| `skanvil eval route "<p>"`     | Simulate Stage-1 offline BM25 trigger routing for a user prompt.                              |
+| `skanvil eval triggers`        | Check `evals.json` trigger prompts offline against all descriptions for routing collisions.   |
+| `skanvil eval export`          | Export `evals.json` cases and triggers as JSON or Promptfoo configs (`--ablation`).           |
+| `skanvil feedback list`        | Summarise and deduplicate friction reports recorded in `.skanvil-feedback.jsonl`.             |
+| `skanvil feedback promote`     | Promote validated `suggestedEvalCase` entries into skill `evals.json` suites (`--prune`).     |
+| `skanvil templates eject`      | Copy the skill template into the library to customise it.                                     |
+| `skanvil sync [dest]`          | Install publishable skills from local, npm, or Git sources across coexisting libraries.       |
+| `skanvil install-skill [dest]` | Install or update the `skanvil` and `skanvil-feedback` agent skills in a project.             |
+| `skanvil build`                | Generate the library's typed npm exports, one function per skill.                             |
 
 Every command accepts `--json`, and every command that works on a library accepts `-C, --cwd <path>`. The [command reference](docs/commands.md) lists every option.
 
@@ -133,7 +151,9 @@ npx skanvil install-skill --target claude,copilot,agents   # in the current proj
 npx skanvil install-skill --global --target claude          # for every project
 ```
 
-Installed copies are stamped with the skanvil version, so running the command again after upgrading updates them. A `skanvil` folder you wrote yourself is never overwritten without `--force`.
+`skanvil init` and `skanvil install-skill` also install [`agent-skill/skanvil-feedback`](agent-skill/skanvil-feedback/SKILL.md) by default (pass `--no-feedback` to opt out), enabling agents to log skill friction reports into `.skanvil-feedback.jsonl` for regression testing.
+
+Installed copies are stamped with the skanvil version, so running the command again after upgrading updates them. A `skanvil` or `skanvil-feedback` folder you wrote yourself is never overwritten without `--force`.
 
 ## Documentation
 
@@ -143,6 +163,7 @@ Installed copies are stamped with the skanvil version, so running the command ag
 | [Commands](docs/commands.md)                         | Every command, option and exit code.                                                  |
 | [Configuration](docs/configuration.md)               | `.skanvilrc.json` reference: categories, validation, templates, sync.                 |
 | [Validation rules](docs/validation.md)               | Every rule, its severity and how to tune it. CI recipes.                              |
+| [Evals and quality](docs/evals-and-quality.md)       | Token budgets, skill code-smell rules, `evals.json`, ablation export and feedback.    |
 | [Templates](docs/templates.md)                       | Customising the skill template per library or category.                               |
 | [Parameters and exports](docs/params-and-exports.md) | Parametrized skills, `sync --param`, and `import { codeReview } from "@acme/skills"`. |
 | [Sync](docs/sync.md)                                 | Installing skills into Claude Code, GitHub Copilot and Codex projects.                |
@@ -153,12 +174,17 @@ Installed copies are stamped with the skanvil version, so running the command ag
 ## Programmatic API
 
 ```ts
-import { Library, scaffoldSkill, validateLibrary, syncSkills } from "skanvil";
+import { Library, scaffoldSkill, validateLibrary, analyzeLibraryStats, syncSkills } from "skanvil";
 
 const lib = await Library.open("./my-skills");
-await scaffoldSkill(lib, { type: "front", name: "a11y", description: "Audits accessibility." });
+await scaffoldSkill(lib, {
+  type: "front",
+  name: "a11y",
+  description: "Audits UI components for WCAG accessibility. Use when reviewing React views."
+});
 
-const { errors, diagnostics } = await validateLibrary(lib);
+const { errors } = await validateLibrary(lib);
+const stats = await analyzeLibraryStats(lib, { sort: "tokens" });
 if (errors === 0) await syncSkills(lib, { dest: "../my-app", targets: ["claude"] });
 ```
 

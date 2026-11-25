@@ -7,7 +7,7 @@ skills library is different: that is what the `skanvil` agent skill covers
 ## What this project is
 
 skanvil is a TypeScript (ESM) CLI and Node.js library, published to npm as `skanvil`. It creates,
-validates, indexes, parametrizes, builds and syncs **libraries of Agent Skills**. A library is a
+validates, measures, evaluates, indexes, parametrizes, builds and syncs **libraries of Agent Skills**. A library is a
 `skills/` folder of `SKILL.md` files plus a README index and a `.skanvilrc.json`. skanvil follows
 the Agent Skills spec at https://agentskills.io/specification.
 
@@ -43,8 +43,7 @@ npm test               # vitest; bundles the CLI into tmp/cli-build first
 - **`src/index.ts`** is the public API. Export anything new that is useful programmatically.
 - **`templates/`** is data: the library skeleton and the default skill. Changing how generated
   files look must not require code changes.
-- **`agent-skill/skanvil/`** is the skill that teaches agents to use skanvil. It ships in the npm
-  package.
+- **`agent-skill/skanvil/`** and **`agent-skill/skanvil-feedback/`** are the skills that teach agents to use skanvil and log friction reports. Both ship in the npm package.
 - **`renderTemplate` and `resolveParamValues`** (`src/core/params.ts`) must stay
   **self-contained**: no imports, no outer variables, no helpers defined outside the function.
   `skanvil build` embeds their source with `Function.prototype.toString()`.
@@ -68,9 +67,9 @@ npm test               # vitest; bundles the CLI into tmp/cli-build first
    - the README command table when it applies;
    - `agent-skill/skanvil/SKILL.md` and `references/REFERENCE.md`.
 
-   The test "the bundled skill passes skanvil's own default validation" must stay green. Never put
-   a default placeholder string (such as the all-caps to-do marker) in the agent skill, not even as
-   an example.
+   The test "both bundled skills pass skanvil's own default validation with no warnings" must stay green. Never put
+   a default placeholder string (such as the all-caps to-do marker) or a vague fallback phrase in the bundled
+   agent skills, not even as an example.
 
 4. **Preserve user files exactly.**
    - Edit `SKILL.md` through `SkillFile`, which keeps YAML comments, quoting and untouched bytes.

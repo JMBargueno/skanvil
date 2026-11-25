@@ -5,9 +5,10 @@
  * @module
  */
 import fs from "node:fs/promises";
+import { isSeq } from "yaml";
 
 import { exists } from "../util/fs.js";
-import type { Category } from "./config.js";
+import { SKILL_STATUSES, type Category, type SkillStatus } from "./config.js";
 import { Library } from "./library.js";
 import { ensureSentence, lowerFirst } from "./naming.js";
 import { buildEntry, getEntry, insertEntry, removeEntry, replaceEntry } from "./readme-index.js";
@@ -41,8 +42,11 @@ function buildResources(includeAssets: boolean, includeReferences: boolean, incl
 /**
  * Writes a category's `metadata` entries and `compatibility` into the frontmatter. An empty
  * `compatibility` is removed when the category has none, because the spec requires 1-500 characters.
+ *
+ * @param skill - Parsed skill file to update.
+ * @param category - Category whose `metadata` and `compatibility` should be applied.
  */
-function applyCategory(skill: SkillFile, category: Category): void {
+export function applyCategory(skill: SkillFile, category: Category): void {
   for (const [key, value] of Object.entries(category.metadata)) {
     skill.set(["metadata", key], value);
   }
@@ -51,6 +55,25 @@ function applyCategory(skill: SkillFile, category: Category): void {
   } else if (!skill.getString("compatibility")) {
     skill.delete(["compatibility"]);
   }
+}
+
+/**
+ * Converts a legacy `tools` frontmatter field into a space-separated `allowed-tools` string,
+ * preserving any existing `allowed-tools` value.
+ *
+ * @param skill - Parsed skill file with valid YAML frontmatter.
+ * @returns `true` when a `tools` field was present and converted.
+ */
+export function convertToolsField(skill: SkillFile): boolean {
+  if (!skill.isValidYaml || !skill.has("tools")) return false;
+  const node = skill.doc!.get("tools", true);
+  const tools = isSeq(node)
+    ? (node.toJSON() as unknown[]).map(String)
+    : String(skill.getString("tools")).split(/[\s,]+/);
+  const value = tools.filter(Boolean).join(" ");
+  skill.delete(["tools"]);
+  if (value && !skill.has("allowed-tools")) skill.set(["allowed-tools"], value);
+  return true;
 }
 
 /** Options of {@link scaffoldSkill}. */
@@ -188,6 +211,12 @@ export interface EditSkillOptions {
   title?: string;
   /** New description for the frontmatter and the README entry. */
   description?: string;
+  /** Owner written to `metadata.owner`. */
+  owner?: string;
+  /** Lifecycle status written to `metadata.status`. */
+  status?: SkillStatus | string;
+  /** Replacement skill folder written to `metadata.replaced-by` (implies `status: "deprecated"`). */
+  replacedBy?: string;
 }
 
 /**
@@ -227,9 +256,35 @@ export async function editSkill(
   const newName = library.categories.buildName(newCategory.id, options.rename || skillName);
   const description = options.description ? ensureSentence(options.description) : "";
   const title = options.title ? String(options.title).trim() : "";
+  const owner = options.owner !== undefined ? String(options.owner).trim() : "";
+  const status = options.status !== undefined ? String(options.status).trim().toLowerCase() : "";
+  const replacedBy = options.replacedBy !== undefined ? String(options.replacedBy).trim() : "";
 
-  if (newName === skillName && !description && !title) {
-    throw new Error("Nothing to edit. Provide --rename, --type, --title or --description.");
+  if (options.owner !== undefined && !owner) {
+    throw new Error("Owner cannot be empty.");
+  }
+  if (options.status !== undefined && !(SKILL_STATUSES as readonly string[]).includes(status)) {
+    throw new Error(`Invalid status '${options.status}'. Allowed values: ${SKILL_STATUSES.join(", ")}.`);
+  }
+  if (options.replacedBy !== undefined) {
+    if (!replacedBy) {
+      throw new Error("Replacement skill name (--replaced-by) cannot be empty.");
+    }
+    if (status && status !== "deprecated") {
+      throw new Error("--replaced-by can only be used with status 'deprecated'.");
+    }
+    if (replacedBy === newName || replacedBy === skillName) {
+      throw new Error(`Skill '${skillName}' cannot replace itself.`);
+    }
+    if (!(await library.hasSkill(replacedBy)) || !library.categories.fromFolder(replacedBy).validated) {
+      throw new Error(`Replacement skill '${replacedBy}' not found (or is not a publishable skill).`);
+    }
+  }
+
+  if (newName === skillName && !description && !title && !owner && !status && !replacedBy) {
+    throw new Error(
+      "Nothing to edit. Provide --rename, --type, --title, --description, --owner, --status or --replaced-by."
+    );
   }
   if (newName !== skillName && (await exists(library.skillPath(newName)))) {
     throw new Error(`Skill folder already exists: ${library.skillPath(newName)}`);
@@ -243,6 +298,11 @@ export async function editSkill(
   if (description) skill.set(["description"], description);
   if (title) skill.setTitle(title);
   if (newCategory.id !== oldCategory.id) applyCategory(skill, newCategory);
+  if (owner) skill.set(["metadata", "owner"], owner);
+  const nextStatus = status || (replacedBy ? "deprecated" : "");
+  if (nextStatus) skill.set(["metadata", "status"], nextStatus);
+  if (replacedBy) skill.set(["metadata", "replaced-by"], replacedBy);
+  else if (status && status !== "deprecated") skill.delete(["metadata", "replaced-by"]);
 
   // 2. Compute the new README.
   const readme = await library.readReadme();
