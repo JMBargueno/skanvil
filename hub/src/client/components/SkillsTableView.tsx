@@ -31,7 +31,13 @@ function compareRows(a: SkillAnalyticsRow, b: SkillAnalyticsRow, key: SortKey, d
   return (va - vb) * factor;
 }
 
-export function SkillsTableView({ data }: { data: SkillsAnalyticsResponse }) {
+export function SkillsTableView({
+  data,
+  onSelectSkill
+}: {
+  data: SkillsAnalyticsResponse;
+  onSelectSkill: (library: string, skill: string) => void;
+}) {
   const [search, setSearch] = useState("");
   const [onlyZombies, setOnlyZombies] = useState(false);
   const [onlyDeprecated, setOnlyDeprecated] = useState(false);
@@ -88,7 +94,7 @@ export function SkillsTableView({ data }: { data: SkillsAnalyticsResponse }) {
           </label>
         </div>
         <span className="muted" style={{ fontSize: 12 }}>
-          Showing {rows.length} of {data.skills.length} skill(s)
+          Showing {rows.length} of {data.skills.length} skill(s) · click any skill for details
         </span>
       </div>
 
@@ -149,7 +155,13 @@ export function SkillsTableView({ data }: { data: SkillsAnalyticsResponse }) {
                 <tr key={`${row.library}:${row.skill}`}>
                   <td>
                     <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                      <span className="code-chip">{row.skill}</span>
+                      <button
+                        type="button"
+                        className="skill-link-chip"
+                        onClick={() => onSelectSkill(row.library, row.skill)}
+                      >
+                        {row.skill}
+                      </button>
                       {row.isZombie && <span className="badge badge-warn">ZOMBIE</span>}
                       {row.valid === false && <span className="badge badge-danger">INVALID</span>}
                     </div>

@@ -134,11 +134,12 @@ skanvil list --owner "@frontend-platform" --json
 
 Run every [validation rule](validation.md).
 
-| Option              | Description                                                                     |
-| ------------------- | ------------------------------------------------------------------------------- |
-| `--strict`          | Warnings also make the command fail.                                            |
-| `--skill <name>`    | Only report problems of one skill.                                              |
-| `--format <format>` | Output format: `text` (default), `github` (PR annotations), `sarif`, or `json`. |
+| Option              | Description                                                                                                |
+| ------------------- | ---------------------------------------------------------------------------------------------------------- |
+| `--strict`          | Warnings also make the command fail.                                                                       |
+| `--skill <name>`    | Only report problems of one skill.                                                                         |
+| `--format <format>` | Output format: `text` (default), `github` (PR annotations), `sarif`, or `json`.                            |
+| `--embeddings`      | Query `validation.embeddingsEndpoint` (plus `SKANVIL_EMBEDDINGS_KEY` if set) for cosine similarity checks. |
 
 Exit code 1 means there are errors, or warnings with `--strict`. `skanvil validate --help` lists every rule with its default severity. `--json` (or `--format json`) prints:
 
@@ -165,9 +166,12 @@ Exit code 1 means there are errors, or warnings with `--strict`. `skanvil valida
 
 Compare the working library against a Git ref (`HEAD` by default) to inspect changed skills, Stage-1 `alwaysLoadedTokens` deltas, `params.json` schema changes, newly introduced validation diagnostics, and trigger routing regressions. Works whether the library is at the Git root or in a monorepo subdirectory.
 
-| Option              | Description                                    |
-| ------------------- | ---------------------------------------------- |
-| `--format <format>` | Output format: `text` (default) or `markdown`. |
+| Option                  | Description                                                                      |
+| ----------------------- | -------------------------------------------------------------------------------- |
+| `--format <format>`     | Output format: `text` (default) or `markdown`.                                   |
+| `--from-hub`            | Annotate modified skills with recent `skanvil-hub` usage and failure rates.      |
+| `--endpoint <url>`      | `skanvil-hub` base URL when `--from-hub` is passed (default: config or env var). |
+| `--admin-token <token>` | Hub read/admin bearer token when `--from-hub` requires authentication.           |
 
 ```bash
 skanvil diff
@@ -325,6 +329,31 @@ skanvil eval route "Audit React modal keyboard focus" --top 3
 skanvil eval route "Review Postgres migration locks" --json
 ```
 
+## `eval run`
+
+Run `evals.json` behavioral test cases natively against OpenAI, Anthropic, Gemini, Ollama, or the offline deterministic `mock` provider.
+
+| Option                  | Description                                                                                   |
+| ----------------------- | --------------------------------------------------------------------------------------------- |
+| `--provider <name>`     | LLM provider: `openai`, `anthropic`, `gemini`, `ollama`, or `mock` (default).                 |
+| `--model <name>`        | Override provider model identifier.                                                           |
+| `--base-url <url>`      | Override provider API base URL (for gateways or Ollama).                                      |
+| `--api-key <key>`       | Override provider API key env var (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.).              |
+| `--skill <name>`        | Only run cases for a single skill.                                                            |
+| `--split <split>`       | Filter cases by `train` or `eval`.                                                            |
+| `--case <id>`           | Run only one matching case ID.                                                                |
+| `--ablation`            | Run blind `withSkill` vs `withoutSkill` ablation and compute lift delta.                      |
+| `--judge`               | Evaluate non-regex rubric expectations with an LLM-as-a-judge pass.                           |
+| `--strict`              | Exit with code `1` if any case fails.                                                         |
+| `--emit-telemetry`      | Post `skill.invoked` events per evaluated case (`agent: "eval:<provider>"`) to `skanvil-hub`. |
+| `--endpoint <url>`      | Hub URL for `--emit-telemetry`.                                                               |
+| `--telemetry-key <key>` | Hub bearer key for `--emit-telemetry`.                                                        |
+
+```bash
+skanvil eval run --provider mock --ablation
+skanvil eval run --provider openai --model gpt-4o-mini --judge --emit-telemetry
+```
+
 ## `feedback list`
 
 Summarize and group friction reports recorded in `.skanvil-feedback.jsonl` (produced by the bundled `skanvil-feedback` skill), tolerating malformed lines without aborting.
@@ -420,13 +449,13 @@ skanvil telemetry emit --skill front-api-review --agent claude --outcome success
 
 ## `telemetry hook`
 
-Read an agent hook JSON payload on `stdin` (`PostToolUse`, `afterFileRead`, `AfterTool`), extract skill invocation metadata when a skill's `SKILL.md` is read or a `Skill` tool runs, and send or queue a `skill.invoked` event. Always exits `0` silently so coding agents are never blocked.
+Read an agent hook JSON payload on `stdin`, extract skill invocation metadata when a skill's `SKILL.md` is read or a `Skill` tool runs, and send or queue a `skill.invoked` event. When `session_id` / `conversation_id` is present, start/tool payloads are buffered in `~/.skanvil/sessions/` and emitted when the session-end hook (`Stop`, `SessionEnd`, `post_cascade_response`) fires so `durationMs`, `toolCalls`, and `failedToolCalls` are recorded accurately. Always exits `0` silently so coding agents are never blocked.
 
-| Option             | Description                                                          |
-| ------------------ | -------------------------------------------------------------------- |
-| `--agent <name>`   | Hook source: `claude`, `cursor`, or `gemini` (required).             |
-| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config). |
-| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).             |
+| Option             | Description                                                                                          |
+| ------------------ | ---------------------------------------------------------------------------------------------------- |
+| `--agent <name>`   | Hook source: `claude`, `cursor`, `gemini`, `copilot`, `windsurf`, `codex`, or `opencode` (required). |
+| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config).                                 |
+| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).                                             |
 
 ## `telemetry push`
 
@@ -442,20 +471,49 @@ Flush previously queued offline telemetry events from `~/.skanvil/telemetry-queu
 
 ## `telemetry install-hooks [dest]`
 
-Idempotently install non-blocking telemetry hooks into `claude` (`.claude/settings.json`), `cursor` (`.cursor/hooks.json`), and/or `gemini` (`.gemini/settings.json`) settings without overwriting unrelated user rules.
+Idempotently install non-blocking usage and session-end timing telemetry hooks across any of the 7 supported coding agents (`claude`, `cursor`, `gemini`, `copilot`, `windsurf`, `codex`, `opencode`) without overwriting unrelated user rules.
 
-| Option            | Description                                                                   |
-| ----------------- | ----------------------------------------------------------------------------- |
-| `--target <name>` | `claude`, `cursor`, `gemini` (repeatable or comma-separated; default: all 3). |
-| `--global`        | Write into user home config folders instead of a project (`dest` disallowed). |
-| `--dry-run`       | Preview settings changes without writing.                                     |
+| Option            | Description                                                                                                               |
+| ----------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `--target <name>` | `claude`, `cursor`, `gemini`, `copilot`, `windsurf`, `codex`, `opencode` (repeatable or comma-separated; default: all 7). |
+| `--global`        | Write into user home config folders instead of a project (`dest` disallowed).                                             |
+| `--dry-run`       | Preview settings changes without writing.                                                                                 |
 
 ```bash
 skanvil telemetry install-hooks --target claude,cursor,gemini --dry-run
-skanvil telemetry install-hooks --global --target claude
+skanvil telemetry install-hooks --global --target claude,codex
 ```
 
 `--json` prints `{ dryRun, scope, results: [{ agent, file, status }] }`.
+
+## `telemetry ingest-transcripts <path>`
+
+Scan local coding-agent session logs (`.jsonl` or `.json` files or folders) to backfill historical `skill.invoked` events idempotently to `skanvil-hub`.
+
+| Option             | Description                                                                   |
+| ------------------ | ----------------------------------------------------------------------------- |
+| `--agent <name>`   | Filter or override detected agent name (`claude`, `cursor`, `codex`, etc.).   |
+| `--library <name>` | Override library display name reported in ingested events.                    |
+| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config).          |
+| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).                      |
+| `--dry-run`        | Parse and preview extracted events without sending or queueing.               |
+| `--no-queue`       | Fail with exit code `1` on network error instead of writing to offline queue. |
+
+`--json` prints `{ filesScanned, sent, queued, dryRun?, skippedReason?, error?, events }`.
+
+## `telemetry audit`
+
+Query `skanvil-hub` (`GET /api/dashboard/skills`) to inspect live usage across a lookback window, detect zero-invocation **zombie** skills wasting Stage-1 tokens, and flag high-friction skills.
+
+| Option                  | Description                                                             |
+| ----------------------- | ----------------------------------------------------------------------- |
+| `--days <n>`            | Lookback window in days (`1`–`365`, default: `30`).                     |
+| `--library <name>`      | Filter audit to one library name (defaults to `--cwd` library if open). |
+| `--endpoint <url>`      | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config).    |
+| `--admin-token <token>` | Hub read/admin bearer token (default: `SKANVIL_HUB_ADMIN_TOKEN`).       |
+| `--strict-zombies`      | Exit with code `1` when any non-deprecated zombie skill is detected.    |
+
+`--json` prints `{ endpoint, library, days, skills, zombies, wastedStage1Tokens, highFriction }`.
 
 ## `templates eject`
 
@@ -481,6 +539,7 @@ Install the library's skills into a project. `dest` defaults to the current dire
 | `--status <value>`        | Only sync skills with this `metadata.status`. Repeatable. Disables pruning.                                                                                                                             |
 | `--include-deprecated`    | Also sync skills marked `metadata.status: "deprecated"` (skipped and pruned by default).                                                                                                                |
 | `--force`                 | Also sync skills that have validation errors.                                                                                                                                                           |
+| `--frozen`                | Verify synced targets already match `.skanvil-sync.json` (including Git `commitSha`) without mutating disk or fetching updates; fails on any drift.                                                     |
 | `--dry-run`               | Show what would change without writing.                                                                                                                                                                 |
 | `--param <name=value>`    | Value for [parametrized skills](params-and-exports.md). Repeatable. It applies to every synced skill that declares it, and an unknown name is an error. Remembered per target and source.               |
 | `--global`                | Install into your user folders instead of a project (see below). Do not pass `dest` with it.                                                                                                            |
@@ -499,7 +558,26 @@ Custom `--target` paths must resolve to a folder inside `dest`: `../shared` or `
 skanvil sync ../my-app --target claude,cursor --dry-run
 skanvil sync --from @acme/my-skills --target agents --link
 skanvil sync --from github:acme/my-skills#v1 --target claude
+skanvil sync --from github:acme/my-skills#v1 --target claude --frozen
 skanvil sync -C ./my-skills --global --target claude,gemini
+```
+
+## `outdated [dest]`
+
+Compare installed `.skanvil-sync.json` manifests across local, npm, and Git sources against upstream sources and report pending updates, pinned `commitSha` drift, and Stage-1 token deltas. `dest` defaults to the current directory.
+
+| Option            | Description                                                           |
+| ----------------- | --------------------------------------------------------------------- |
+| `--target <name>` | Agent preset(s) or relative folders to inspect.                       |
+| `--from <source>` | Filter entries to matching source specifiers.                         |
+| `--global`        | Inspect user-level agent folders (`dest` disallowed).                 |
+| `--strict`        | Exit with code `1` when any synced source is outdated or unreachable. |
+
+`--json` prints `{ dest, scope, entries, outdatedCount, errorCount }`.
+
+```bash
+skanvil outdated --strict
+skanvil outdated ../my-app --target claude,cursor --json
 ```
 
 ## `build`

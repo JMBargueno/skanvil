@@ -45,29 +45,40 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
   if (data.totalInvocations === 0 && data.catalogSkills === 0 && data.feedbackCount === 0) {
     return (
       <div className="card empty-state">
-        <h2 style={{ margin: 0, fontSize: 20 }}>No telemetry data received yet</h2>
-        <p className="muted" style={{ maxWidth: 520, margin: 0 }}>
+        <div className="empty-icon-ring" aria-hidden="true">
+          <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M4 17l5-5 4 4 7-8" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M16 8h4v4" strokeLinecap="round" strokeLinejoin="round" />
+            <rect x="3" y="3" width="18" height="18" rx="5" opacity="0.35" />
+          </svg>
+        </div>
+        <h2 style={{ margin: 0, fontSize: 22, letterSpacing: "-0.025em" }}>No telemetry data received yet</h2>
+        <p className="muted" style={{ maxWidth: 520, margin: 0, fontSize: 14 }}>
           Connect a skills library with CI snapshots or coding agent hooks to see usage metrics, zombie-skill detection,
           Stage-1 token trends, and friction reports.
         </p>
-        <button type="button" className="btn btn-primary" onClick={onOpenSetup}>
+        <button type="button" className="btn btn-primary" style={{ marginTop: 4 }} onClick={onOpenSetup}>
           Connect CLI &amp; Hooks
         </button>
+        <div className="empty-hint">
+          <span>Want instant demo telemetry? Run</span>
+          <span className="code-chip">npm --prefix hub run seed</span>
+        </div>
       </div>
     );
   }
 
   const maxDaily = data.daily.reduce((acc, point) => Math.max(acc, point.invocations, point.errors, point.feedback), 1);
   const chartWidth = 720;
-  const chartHeight = 180;
+  const chartHeight = 186;
   const padLeft = 36;
   const padRight = 12;
-  const padTop = 12;
+  const padTop = 14;
   const padBottom = 26;
   const plotWidth = chartWidth - padLeft - padRight;
   const plotHeight = chartHeight - padTop - padBottom;
   const stepWidth = data.daily.length > 0 ? plotWidth / data.daily.length : plotWidth;
-  const barWidth = Math.max(3, Math.min(18, stepWidth * 0.58));
+  const barWidth = Math.max(4, Math.min(20, stepWidth * 0.58));
 
   const successPct = data.successRate !== null ? `${Math.round(data.successRate * 100)}%` : "—";
   const evalPct = data.evalPassRate !== null ? `${Math.round(data.evalPassRate * 100)}%` : "—";
@@ -75,7 +86,7 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
   return (
     <div className="stack-col">
       <div className="kpi-grid">
-        <div className="card">
+        <div className="card kpi-card">
           <div className="kpi-label">Invocations ({data.days}d)</div>
           <div className="kpi-value">{data.totalInvocations.toLocaleString()}</div>
           <div className="kpi-sub">
@@ -83,7 +94,7 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card kpi-card">
           <div className="kpi-label">Active / Catalog Skills</div>
           <div className="kpi-value">
             {data.activeSkills} / {data.catalogSkills}
@@ -91,7 +102,7 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
           <div className="kpi-sub">Skills invoked during window</div>
         </div>
 
-        <div className="card">
+        <div className="card kpi-card">
           <div className="kpi-label">Zombie Skills</div>
           <div className="kpi-value" style={{ color: data.zombieSkills > 0 ? "var(--warn)" : "var(--success)" }}>
             {data.zombieSkills}
@@ -103,19 +114,19 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
           </div>
         </div>
 
-        <div className="card">
+        <div className="card kpi-card">
           <div className="kpi-label">Always-Loaded (Stage 1)</div>
           <div className="kpi-value">~{data.alwaysLoadedTokens.toLocaleString()}</div>
           <div className="kpi-sub">Estimated tokens across snapshots</div>
         </div>
 
-        <div className="card">
+        <div className="card kpi-card">
           <div className="kpi-label">Eval Trigger Pass Rate</div>
           <div className="kpi-value">{evalPct}</div>
           <div className="kpi-sub">Latest CI trigger routing check</div>
         </div>
 
-        <div className="card">
+        <div className="card kpi-card">
           <div className="kpi-label">Projects &amp; Feedback</div>
           <div className="kpi-value">{data.activeProjects} projects</div>
           <div className="kpi-sub">{data.feedbackCount} friction report(s)</div>
@@ -128,13 +139,13 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
             <h3 className="card-title">Daily Activity ({data.days}d UTC)</h3>
             <div className="legend">
               <span className="legend-item">
-                <span className="dot" style={{ background: "var(--accent)" }} /> Invocations
+                <span className="dot" style={{ background: "var(--accent)", color: "var(--accent)" }} /> Invocations
               </span>
               <span className="legend-item">
-                <span className="dot" style={{ background: "var(--danger)" }} /> Errors
+                <span className="dot" style={{ background: "var(--danger)", color: "var(--danger)" }} /> Errors
               </span>
               <span className="legend-item">
-                <span className="dot" style={{ background: "var(--warn)" }} /> Feedback
+                <span className="dot" style={{ background: "var(--warn)", color: "var(--warn)" }} /> Feedback
               </span>
             </div>
           </div>
@@ -146,6 +157,21 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
               role="img"
               aria-label="Daily skill invocations, errors, and feedback chart"
             >
+              <defs>
+                <linearGradient id="invGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--accent-hover)" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="var(--accent)" stopOpacity="0.45" />
+                </linearGradient>
+                <linearGradient id="errGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--danger)" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="var(--danger)" stopOpacity="0.45" />
+                </linearGradient>
+                <linearGradient id="fbGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--warn)" stopOpacity="0.95" />
+                  <stop offset="100%" stopColor="var(--warn)" stopOpacity="0.45" />
+                </linearGradient>
+              </defs>
+
               {[0, 0.5, 1].map((ratio) => {
                 const y = padTop + plotHeight * (1 - ratio);
                 const val = Math.round(maxDaily * ratio);
@@ -156,10 +182,10 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
                       y1={y}
                       x2={chartWidth - padRight}
                       y2={y}
-                      stroke="#263248"
-                      strokeDasharray="3 3"
+                      stroke="var(--chart-grid)"
+                      strokeDasharray="3 4"
                     />
-                    <text x={padLeft - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
+                    <text x={padLeft - 7} y={y + 4} textAnchor="end" fontSize="10" fill="var(--chart-axis)">
                       {val}
                     </text>
                   </g>
@@ -184,32 +210,32 @@ export function OverviewView({ data, onOpenSetup }: OverviewViewProps) {
                       x={xCenter - barWidth / 2}
                       y={baseY - invH}
                       width={barWidth}
-                      height={Math.max(invH, point.invocations > 0 ? 2 : 0)}
-                      rx={2}
-                      fill="var(--accent)"
+                      height={Math.max(invH, point.invocations > 0 ? 3 : 0)}
+                      rx={4}
+                      fill="url(#invGrad)"
                     />
                     {point.errors > 0 && (
                       <rect
                         x={xCenter - barWidth / 2}
                         y={baseY - errH}
-                        width={Math.max(2, barWidth * 0.45)}
-                        height={Math.max(2, errH)}
-                        rx={1}
-                        fill="var(--danger)"
+                        width={Math.max(3, barWidth * 0.45)}
+                        height={Math.max(3, errH)}
+                        rx={2}
+                        fill="url(#errGrad)"
                       />
                     )}
                     {point.feedback > 0 && (
                       <rect
                         x={xCenter}
                         y={baseY - fbH}
-                        width={Math.max(2, barWidth * 0.45)}
-                        height={Math.max(2, fbH)}
-                        rx={1}
-                        fill="var(--warn)"
+                        width={Math.max(3, barWidth * 0.45)}
+                        height={Math.max(3, fbH)}
+                        rx={2}
+                        fill="url(#fbGrad)"
                       />
                     )}
                     {showDate && (
-                      <text x={xCenter} y={chartHeight - 6} textAnchor="middle" fontSize="10" fill="#94a3b8">
+                      <text x={xCenter} y={chartHeight - 6} textAnchor="middle" fontSize="10" fill="var(--chart-axis)">
                         {point.date.slice(5)}
                       </text>
                     )}

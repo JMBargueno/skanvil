@@ -2,7 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { Hono, type Context } from "hono";
 
-import { TelemetryBatchSchema } from "../shared/schema.js";
+import { FeedbackStatusSchema, FeedbackTriageRequestSchema, TelemetryBatchSchema } from "../shared/schema.js";
+import { AlertDispatcher } from "./alerts.js";
 import {
   buildSessionSetCookie,
   constantTimeEqual,
@@ -29,12 +30,28 @@ const MIME_TYPES: Record<string, string> = {
   ".txt": "text/plain; charset=utf-8"
 };
 
+export interface CreateHubAppOptions {
+  alertDispatcher?: AlertDispatcher;
+}
+
 function parseAnalyticsQuery(c: Context): AnalyticsQuery {
   const rawLibrary = c.req.query("library")?.trim();
   const library = rawLibrary && rawLibrary !== "all" ? rawLibrary : undefined;
   const rawDays = Number(c.req.query("days") ?? "30");
   const days = Number.isFinite(rawDays) ? Math.max(1, Math.min(365, Math.round(rawDays))) : 30;
-  return { ...(library ? { library } : {}), days };
+  const rawStatus = c.req.query("status")?.trim();
+  const parsedStatus = rawStatus && rawStatus !== "all" ? FeedbackStatusSchema.safeParse(rawStatus) : null;
+  const status = parsedStatus?.success ? parsedStatus.data : undefined;
+  return { ...(library ? { library } : {}), days, ...(status ? { status } : {}) };
+}
+
+function csvCell(value: string | number | null | undefined): string {
+  if (value === null || value === undefined) return "";
+  const raw = String(value);
+  if (/[",\r\n]/.test(raw)) {
+    return `"${raw.replace(/"/g, '""')}"`;
+  }
+  return raw;
 }
 
 function tryReadStaticFile(filePath: string): { bytes: Uint8Array; mime: string } | null {
@@ -51,8 +68,9 @@ function tryReadStaticFile(filePath: string): { bytes: Uint8Array; mime: string 
   }
 }
 
-export function createHubApp(store: TelemetryStore, config: HubConfig): Hono {
+export function createHubApp(store: TelemetryStore, config: HubConfig, options: CreateHubAppOptions = {}): Hono {
   const app = new Hono();
+  const alertDispatcher = options.alertDispatcher ?? AlertDispatcher.fromConfig(config);
 
   app.use("*", async (c, next) => {
     await next();
@@ -91,6 +109,9 @@ export function createHubApp(store: TelemetryStore, config: HubConfig): Hono {
     }
 
     const result = await store.ingestEvents(parsed.data.events);
+    if (result.accepted > 0) {
+      void alertDispatcher.notifyBatch(store, parsed.data.events);
+    }
     return c.json({ ok: true, accepted: result.accepted, duplicates: result.duplicates });
   });
 
@@ -142,6 +163,16 @@ export function createHubApp(store: TelemetryStore, config: HubConfig): Hono {
     return c.json(await store.getSkillsAnalytics(parseAnalyticsQuery(c)));
   });
 
+  app.get("/api/dashboard/skill-detail", async (c) => {
+    const library = c.req.query("library")?.trim();
+    const skill = c.req.query("skill")?.trim();
+    if (!library || !skill) {
+      return c.json({ error: "Query parameters 'library' and 'skill' are required." }, 400);
+    }
+    const { days } = parseAnalyticsQuery(c);
+    return c.json(await store.getSkillDetail(library, skill, days));
+  });
+
   app.get("/api/dashboard/budgets", async (c) => {
     return c.json(await store.getBudgetsHistory(parseAnalyticsQuery(c)));
   });
@@ -150,8 +181,86 @@ export function createHubApp(store: TelemetryStore, config: HubConfig): Hono {
     return c.json(await store.getFeedbackSummary(parseAnalyticsQuery(c)));
   });
 
+  app.patch("/api/dashboard/feedback/triage", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    const parsed = FeedbackTriageRequestSchema.safeParse(body);
+    if (!parsed.success) {
+      return c.json({ error: "Invalid feedback triage payload", details: parsed.error.issues }, 400);
+    }
+    await store.setFeedbackTriage(parsed.data);
+    return c.json({ ok: true, groupKey: parsed.data.groupKey, status: parsed.data.status });
+  });
+
   app.get("/api/dashboard/adoption", async (c) => {
     return c.json(await store.getSyncAdoption(parseAnalyticsQuery(c)));
+  });
+
+  app.get("/api/dashboard/export", async (c) => {
+    const format = c.req.query("format")?.trim().toLowerCase() === "csv" ? "csv" : "json";
+    const rows = await store.exportEvents(parseAnalyticsQuery(c));
+
+    if (format === "csv") {
+      const header = [
+        "eventId",
+        "type",
+        "timestamp",
+        "library",
+        "skill",
+        "agent",
+        "model",
+        "outcome",
+        "durationMs",
+        "toolCalls",
+        "failedToolCalls",
+        "projectHash"
+      ].join(",");
+      const lines = rows.map((row) =>
+        [
+          row.eventId,
+          row.type,
+          row.timestamp,
+          row.library,
+          row.skill,
+          row.agent,
+          row.model,
+          row.outcome,
+          row.durationMs,
+          row.toolCalls,
+          row.failedToolCalls,
+          row.projectHash
+        ]
+          .map(csvCell)
+          .join(",")
+      );
+      return new Response(`${[header, ...lines].join("\n")}\n`, {
+        status: 200,
+        headers: {
+          "content-type": "text/csv; charset=utf-8",
+          "content-disposition": 'attachment; filename="skanvil-telemetry.csv"'
+        }
+      });
+    }
+
+    return new Response(
+      `${JSON.stringify({ exportedAt: new Date().toISOString(), count: rows.length, events: rows }, null, 2)}\n`,
+      {
+        status: 200,
+        headers: {
+          "content-type": "application/json; charset=utf-8",
+          "content-disposition": 'attachment; filename="skanvil-telemetry.json"'
+        }
+      }
+    );
+  });
+
+  app.post("/api/dashboard/retention/prune", async (c) => {
+    const body = (await c.req.json().catch(() => null)) as { days?: unknown } | null;
+    const rawDays = Number(body?.days ?? c.req.query("days") ?? config.retentionDays ?? 90);
+    if (!Number.isFinite(rawDays) || rawDays < 1 || rawDays > 3650) {
+      return c.json({ error: "days must be between 1 and 3650." }, 400);
+    }
+    const result = await store.pruneOldData(Math.round(rawDays));
+    return c.json({ ok: true, ...result });
   });
 
   app.all("/api/*", (c) => c.json({ error: "Not found" }, 404));

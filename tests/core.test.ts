@@ -1,9 +1,11 @@
+import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
+import { parse as parseYaml } from "yaml";
 
 import { Categories } from "../src/core/categories.js";
-import { resolveConfig } from "../src/core/config.js";
+import { DEFAULT_SEMANTIC_OVERLAP_THRESHOLD, resolveConfig } from "../src/core/config.js";
 import { parseEvals } from "../src/core/evals.js";
 import { toKebabCase } from "../src/core/naming.js";
 import {
@@ -24,9 +26,12 @@ import {
   resolveTelemetrySettings
 } from "../src/core/telemetry.js";
 import {
+  canonicalizeSemanticTokens,
+  cosineSimilarity,
   estimateTokens,
   extractSection,
   jaccardSimilarity,
+  semanticSimilarity,
   stripFencedCode,
   tokenizeForSimilarity
 } from "../src/core/text.js";
@@ -405,5 +410,45 @@ describe("telemetry config, privacy and redaction", () => {
     expect(sanitized).not.toContain(aws);
     expect(sanitized).toContain("<redacted-token>");
     expect(sanitized).toContain("<redacted-aws-key>");
+  });
+
+  test("semanticSimilarity catches paraphrased domains and cosineSimilarity scores dense vectors", () => {
+    const dbA = "Audits PostgreSQL SQL database tables and queries for locks. Use when reviewing database migrations.";
+    const dbB = "Reviews Postgres DB schemas and SQL queries for bottlenecks. Use when inspecting database migrations.";
+    const uiC = "Audits React modal focus trapping and WCAG accessibility attributes in frontend components.";
+
+    expect(canonicalizeSemanticTokens("Reviewing Postgres DB queries")).toEqual([
+      "review",
+      "database",
+      "database",
+      "query"
+    ]);
+    expect(semanticSimilarity(dbA, dbB)).toBeGreaterThanOrEqual(DEFAULT_SEMANTIC_OVERLAP_THRESHOLD);
+    expect(semanticSimilarity(dbA, uiC)).toBeLessThan(0.45);
+
+    expect(cosineSimilarity([1, 0, 0], [1, 0, 0])).toBe(1);
+    expect(cosineSimilarity([1, 0], [0, 1])).toBe(0);
+    expect(() => cosineSimilarity([1], [1, 2])).toThrow(/mismatch/);
+
+    const cfg = resolveConfig({
+      validation: {
+        semanticOverlapThreshold: 0.8,
+        embeddingsEndpoint: "https://embed.internal/v1/embeddings"
+      }
+    });
+    expect(cfg.validation.semanticOverlapThreshold).toBe(0.8);
+    expect(cfg.validation.embeddingsEndpoint).toBe("https://embed.internal/v1/embeddings");
+    expect(() => resolveConfig({ validation: { embeddingsEndpoint: "ftp://bad.host" } })).toThrow(
+      /http:\/\/ or https:\/\//
+    );
+
+    const actionSpec = parseYaml(fs.readFileSync(path.resolve("action.yml"), "utf8")) as {
+      runs: { using: string };
+      inputs: Record<string, unknown>;
+      outputs: Record<string, unknown>;
+    };
+    expect(actionSpec.runs.using).toBe("composite");
+    expect(actionSpec.inputs.strict).toBeDefined();
+    expect(actionSpec.outputs["diff-markdown-path"]).toBeDefined();
   });
 });

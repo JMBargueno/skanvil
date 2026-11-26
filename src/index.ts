@@ -37,6 +37,7 @@ export {
   DEFAULT_CATEGORIES,
   DEFAULT_MAX_DESCRIPTION_TOKENS,
   DEFAULT_OVERLAP_THRESHOLD,
+  DEFAULT_SEMANTIC_OVERLAP_THRESHOLD,
   DEFAULT_TELEMETRY_TIMEOUT_MS,
   DEFAULT_VAGUE_FALLBACKS,
   SKILL_STATUSES,
@@ -83,6 +84,16 @@ export {
   type TriggerCheckResult,
   type TriggerEntry
 } from "./core/evals.js";
+export {
+  EVAL_PROVIDERS,
+  runEvalCases,
+  type EvalCaseRunOutcome,
+  type EvalCompletionFn,
+  type EvalCompletionRequest,
+  type EvalProvider,
+  type EvalRunOptions,
+  type EvalRunResult
+} from "./core/eval-runner.js";
 export {
   FEEDBACK_FILE,
   promoteFeedback,
@@ -136,7 +147,9 @@ export {
   MANIFEST_FILE,
   TARGET_PRESETS,
   USER_TARGET_PRESETS,
+  checkOutdatedSkills,
   parseGitSource,
+  readManifestPinnedSha,
   resolveSource,
   resolveSourceHandle,
   resolveTarget,
@@ -144,7 +157,11 @@ export {
   type InstalledSkillEntry,
   type ManifestSourceEntry,
   type ManifestV2,
+  type OutdatedOptions,
+  type OutdatedReport,
+  type OutdatedSourceEntry,
   type ParsedGitSource,
+  type ResolveSourceHandleOptions,
   type ResolveTargetOptions,
   type ResolvedSourceHandle,
   type SyncOptions,
@@ -166,6 +183,7 @@ export {
   buildSyncAppliedEvents,
   defaultTelemetryQueuePath,
   enqueueTelemetryEvents,
+  fetchHubSkillsAudit,
   flushTelemetryQueue,
   hashIdentifier,
   isTelemetryOptedOut,
@@ -173,7 +191,10 @@ export {
   redactTelemetryText,
   resolveTelemetrySettings,
   sendTelemetryEvents,
+  tryAutoFlushTelemetryQueue,
   type BuildSkillInvokedOptions,
+  type HubAuditResult,
+  type HubSkillAuditRow,
   type LibrarySnapshotEvent,
   type ResolvedTelemetrySettings,
   type SkillFeedbackEvent,
@@ -187,30 +208,40 @@ export {
 } from "./core/telemetry.js";
 export {
   HOOK_AGENTS,
+  collectTranscriptEvents,
+  defaultTelemetrySessionsDir,
   installTelemetryHooks,
   parseAgentHookPayload,
+  parseTranscriptFile,
+  processAgentHookPayload,
   type HookInstallItem,
   type HookInstallTarget,
   type InstallHooksOptions,
   type InstallHooksResult,
-  type ParsedHookSignal
+  type ParsedHookSignal,
+  type TranscriptParseOptions
 } from "./core/telemetry-hooks.js";
 export { ejectSkillTemplate, resolveSkillTemplate } from "./core/templates.js";
 export {
+  canonicalizeSemanticTokens,
+  cosineSimilarity,
   estimateTokens,
   extractSection,
   jaccardSimilarity,
+  semanticSimilarity,
   stripFencedCode,
   tokenizeForSimilarity
 } from "./core/text.js";
 export {
   RULES,
+  fetchEmbeddings,
   findBrokenReferences,
   findUnusedResources,
   formatDiagnostic,
   validateLibrary,
   type Diagnostic,
   type RuleDefinition,
+  type ValidateLibraryOptions,
   type ValidationResult
 } from "./core/validate.js";
 export {

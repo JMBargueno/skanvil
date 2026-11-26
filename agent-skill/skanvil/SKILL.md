@@ -82,15 +82,16 @@ npx skanvil edit <skill> --remove --yes
 
 1. Run `npx skanvil stats --sort tokens` to review Stage-1 (`name` + `description`), Stage-2 (`SKILL.md` lines/tokens) and Stage-3 (`references/`, `scripts/`, `assets/`) sizes.
 2. Run `npx skanvil doctor --fix` to repair README entries, `name` mismatches, frontmatter tabs and `tools` → `allowed-tools` (add `--scaffold-sections` to insert minimal stubs for missing required headings).
-3. Fix remaining diagnostics in `SKILL.md` using the Error Recovery table below, then run `npx skanvil validate` (or `--format github` / `--format sarif` in CI).
-4. Compare branch changes before opening PRs with `npx skanvil diff [baseRef] --format markdown`.
+3. Fix remaining diagnostics in `SKILL.md` using the Error Recovery table below, then run `npx skanvil validate` (or `--format github` / `--format sarif` in CI, plus `--embeddings` when an embeddings endpoint is configured).
+4. Compare branch changes before opening PRs with `npx skanvil diff [baseRef] --format markdown` (add `--from-hub` to annotate modified skills with hub usage and friction metrics).
 
-**Test trigger routing, simulate prompts, and promote feedback (`evals.json`).**
+**Test trigger routing, run LLM evals, and promote feedback (`evals.json`).**
 
 ```bash
 npx skanvil eval route "<user prompt>" --top 3                  # test routing interactively
 npx skanvil eval triggers --strict                             # offline BM25 collision check
 npx skanvil eval triggers --split eval --strict
+npx skanvil eval run --provider mock --ablation                # native LLM runner (openai/anthropic/gemini/ollama/mock)
 npx skanvil eval export --format promptfoo --ablation --out evals.promptfoo.json
 npx skanvil feedback list
 npx skanvil feedback promote --prune
@@ -112,9 +113,11 @@ npx skanvil sync <project-dir> -C <library-dir> --target claude,copilot --dry-ru
 npx skanvil sync <project-dir> -C <library-dir> --target claude,cursor
 npx skanvil sync --from @scope/package --target agents
 npx skanvil sync --from github:org/repo#v1 --target claude
+npx skanvil sync --frozen                                      # verify manifest pinning in CI without writes
+npx skanvil outdated --strict                                  # fail if synced Git sources have newer commits
 ```
 
-Presets: `claude` (`.claude/skills`), `copilot` (`.github/skills`), `agents` / `codex` (`.agents/skills`), `cursor` (`.cursor/skills`), `opencode` (`.opencode/skills`), `windsurf` (`.windsurf/skills`), `gemini` (`.gemini/skills`), or a relative path inside the project. `--global` installs into user home directories. Manifest v2 lets multiple libraries coexist in one target folder without overwriting or pruning each other's skills. `sync` skips `deprecated` skills by default (`--include-deprecated` overrides) and never overwrites foreign folders.
+Presets: `claude` (`.claude/skills`), `copilot` (`.github/skills`), `agents` / `codex` (`.agents/skills`), `cursor` (`.cursor/skills`), `opencode` (`.opencode/skills`), `windsurf` (`.windsurf/skills`), `gemini` (`.gemini/skills`), or a relative path inside the project. `--global` installs into user home directories. Manifest v2 lets multiple libraries coexist in one target folder without overwriting or pruning each other's skills and pins Git sources by `commitSha`. `sync` skips `deprecated` skills by default (`--include-deprecated` overrides) and never overwrites foreign folders.
 
 **Add or change categories.** Edit `categories` in `.skanvilrc.json` (one `default: true` with empty prefix, non-ambiguous prefixes ending in `-` or `_`), move skills with `edit --type`, and run `skanvil index`.
 
@@ -124,7 +127,9 @@ Presets: `claude` (`.claude/skills`), `copilot` (`.github/skills`), `agents` / `
 
 ```bash
 npx skanvil telemetry snapshot                                    # upload budgets, validation and evals
-npx skanvil telemetry install-hooks --target claude,cursor,gemini # non-blocking agent usage hooks
+npx skanvil telemetry install-hooks                               # install usage + session-end hooks across all 7 agents
+npx skanvil telemetry ingest-transcripts <path> --agent claude    # backfill local JSONL transcripts idempotently
+npx skanvil telemetry audit --days 30 --strict-zombies            # check live hub usage and unused skills
 npx skanvil feedback push                                         # upload redacted friction reports
 npx skanvil telemetry push                                        # flush queued offline telemetry events
 ```
@@ -149,7 +154,7 @@ Configure `telemetry.endpoint` in `.skanvilrc.json` or `SKANVIL_TELEMETRY_URL` (
 | `required-sections`                                                                                                            | Missing `## Heading` from `validation.requiredSections`                    | Add the missing level-2 headings (including `## Error Recovery`) with skill-specific content.                                          |
 | `placeholders`, `template-unchanged`                                                                                           | Unreplaced filler or scaffold sentences                                    | Replace every generic scaffold sentence and forbidden placeholder with concrete instructions.                                          |
 | `description-length`, `description-budget`, `max-lines`                                                                        | Oversized metadata or body                                                 | Tighten `description` under ~120 tokens (`name` + `description`) and move deep detail to `references/`.                                |
-| `description-triggers`, `description-overlap`                                                                                  | Missing trigger cues or overlapping siblings                               | Add explicit `"Use when ..."` and exclusion boundaries with keywords that distinguish sibling skills.                                  |
+| `description-triggers`, `description-overlap`, `semantic-overlap`                                                              | Missing trigger cues or overlapping/paraphrased siblings                   | Add explicit `"Use when ..."` and exclusion boundaries with keywords that distinguish sibling skills.                                  |
 | `numbered-steps`, `error-recovery-table`, `vague-fallback`                                                                     | Unstructured instructions or weak recovery advice                          | Number `## Instructions` steps (`1.`, `2.`), add a `## Error Recovery` Markdown table, and replace vague retries with explicit checks. |
 | `broken-references`, `unused-resources`                                                                                        | Missing link target or unlinked file in `references/`/`scripts/`/`assets/` | Link existing files from `SKILL.md` with relative paths, or remove unused files.                                                       |
 | `evals-file`, `evals-required`, `duplicate-trigger`                                                                            | Invalid `evals.json`, missing triggers, or duplicate `shouldTrigger`       | Fix schema (kebab-case `cases[].id`, valid `params`) and ensure positive trigger prompts are distinct per skill.                       |

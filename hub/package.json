@@ -13,17 +13,19 @@
     "build:server": "tsc -p tsconfig.server.json",
     "build": "npm run build:client && npm run build:server",
     "start": "node dist/server/index.js",
+    "seed": "tsx src/server/seed.ts",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.server.json --noEmit",
     "test": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "^1.13.7",
     "hono": "^4.7.0",
-    "skanvil": "file:..",
+    "pg": "^8.13.3",
     "zod": "^4.6.7"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
+    "@types/pg": "^8.11.11",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",

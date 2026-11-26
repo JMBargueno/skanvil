@@ -122,6 +122,18 @@ export const ConfigSchema = z
           .max(1)
           .optional()
           .describe("Lexical similarity threshold (0.1-1.0) for `description-overlap`. Default: 0.65."),
+        semanticOverlapThreshold: z
+          .number()
+          .min(0.1)
+          .max(1)
+          .optional()
+          .describe("Semantic similarity threshold (0.1-1.0) for `semantic-overlap`. Default: 0.72."),
+        embeddingsEndpoint: z
+          .string()
+          .url()
+          .refine((url) => /^https?:\/\//i.test(url), "embeddingsEndpoint must use http:// or https://")
+          .optional()
+          .describe("Optional OpenAI/Ollama embeddings URL used by `skanvil validate --embeddings`."),
         vagueFallbacks: z
           .array(z.string())
           .optional()
@@ -236,6 +248,10 @@ export interface ResolvedConfig {
     maxAlwaysLoadedTokens?: number;
     /** Jaccard similarity threshold for `description-overlap`. @defaultValue {@link DEFAULT_OVERLAP_THRESHOLD} */
     overlapThreshold: number;
+    /** Semantic similarity threshold for `semantic-overlap`. @defaultValue {@link DEFAULT_SEMANTIC_OVERLAP_THRESHOLD} */
+    semanticOverlapThreshold: number;
+    /** Optional HTTP endpoint for dense vector embeddings (`skanvil validate --embeddings`). */
+    embeddingsEndpoint?: string;
     /** Weak fallback phrases rejected by `vague-fallback`. @defaultValue {@link DEFAULT_VAGUE_FALLBACKS} */
     vagueFallbacks: string[];
     /** Severity overrides by rule id. */
@@ -312,6 +328,9 @@ export const DEFAULT_MAX_DESCRIPTION_TOKENS = 120;
 
 /** Default Jaccard similarity threshold for `description-overlap`. */
 export const DEFAULT_OVERLAP_THRESHOLD = 0.65;
+
+/** Default semantic similarity threshold for `semantic-overlap`. */
+export const DEFAULT_SEMANTIC_OVERLAP_THRESHOLD = 0.72;
 
 /** Default vague error-recovery phrases rejected by `vague-fallback`. */
 export const DEFAULT_VAGUE_FALLBACKS = ["try again", "retry if it fails", "retry until it works", "just retry"];
@@ -432,6 +451,8 @@ export function resolveConfig(raw: unknown = {}): ResolvedConfig {
         ? { maxAlwaysLoadedTokens: config.validation.maxAlwaysLoadedTokens }
         : {}),
       overlapThreshold: config.validation?.overlapThreshold ?? DEFAULT_OVERLAP_THRESHOLD,
+      semanticOverlapThreshold: config.validation?.semanticOverlapThreshold ?? DEFAULT_SEMANTIC_OVERLAP_THRESHOLD,
+      ...(config.validation?.embeddingsEndpoint ? { embeddingsEndpoint: config.validation.embeddingsEndpoint } : {}),
       vagueFallbacks: config.validation?.vagueFallbacks ?? DEFAULT_VAGUE_FALLBACKS,
       rules: config.validation?.rules ?? {}
     },

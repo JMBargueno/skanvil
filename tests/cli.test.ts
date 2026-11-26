@@ -672,5 +672,66 @@ describe("stats, eval and deprecation CLI", () => {
     expect(hookRun.status).toBe(0);
     expect(fs.existsSync(queuePath)).toBe(true);
     expect(fs.readFileSync(queuePath, "utf8")).toContain("front-telemetry-check");
+
+    // Native eval run (--provider mock --ablation --strict), outdated check, frozen sync, 7-agent hooks, and transcript dry run.
+    fs.writeFileSync(
+      path.join(root, "skills", "front-telemetry-check", "SKILL.md"),
+      [
+        "---",
+        "name: front-telemetry-check",
+        "description: Audits UI metrics cleanly. Use when checking frontend components.",
+        "---",
+        "",
+        "## Objective\nCheck metrics.",
+        "## When to Activate This Skill\nWhen checking metrics.",
+        "## Instructions\n1. Emit CLI_MOCK_MARKER cleanly.",
+        "## Error Recovery\n| Failure | Cause | Recovery Action |\n| --- | --- | --- |\n| Empty | Missing file | Provide file path. |",
+        "## Output Format\nSummary.",
+        "## Quality Criteria\nPass."
+      ].join("\n"),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(root, "skills", "front-telemetry-check", "evals.json"),
+      JSON.stringify({
+        cases: [
+          {
+            id: "cli-mock-case",
+            prompt: "Run UI telemetry audit",
+            expected: ["Produces CLI_MOCK_MARKER"],
+            mustContain: ["CLI_MOCK_MARKER"]
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const evalRun = skanvil(["eval", "run", "--provider", "mock", "--ablation", "--strict", "--json"], root);
+    expect(evalRun.code).toBe(0);
+    expect(json<{ ok: boolean; passed: number; ablationSummary: { netLift: number } }>(evalRun)).toMatchObject({
+      ok: true,
+      passed: 1,
+      ablationSummary: { netLift: 1 }
+    });
+
+    const syncTarget = tmp();
+    expect(skanvil(["sync", syncTarget, "-C", root, "--target", "claude"], root).code).toBe(0);
+    expect(skanvil(["sync", syncTarget, "-C", root, "--target", "claude", "--frozen"], root).code).toBe(0);
+    const outdatedRun = skanvil(["outdated", syncTarget, "--strict", "--json"], root);
+    expect(outdatedRun.code).toBe(0);
+    expect(json<{ outdatedCount: number }>(outdatedRun).outdatedCount).toBe(0);
+
+    const trFile = path.join(tmp(), "sess.jsonl");
+    fs.writeFileSync(
+      trFile,
+      `${JSON.stringify({ timestamp: "2026-11-26T09:00:00Z", tool_name: "Skill", tool_input: { skill: "front-telemetry-check" } })}\n`,
+      "utf8"
+    );
+    const ingestDry = skanvil(["telemetry", "ingest-transcripts", trFile, "--dry-run", "--json"], root);
+    expect(ingestDry.code).toBe(0);
+    expect(json<{ filesScanned: number; dryRun: boolean; events: unknown[] }>(ingestDry)).toMatchObject({
+      filesScanned: 1,
+      dryRun: true
+    });
   });
 });

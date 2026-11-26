@@ -80,6 +80,7 @@ It also runs automatically after `add` and `edit`.
 
 - `description-budget` and `always-loaded-budget` approximate tokens at ~4 characters per token over `name + "\n" + description`.
 - `description-overlap` compares pairs of validated skills that each have at least 3 unique non-stopword content tokens, warning when Jaccard similarity meets or exceeds `validation.overlapThreshold` (`0.65`).
+- `semantic-overlap` compares validated skill descriptions using an offline stemmed synonym/lemma and character-trigram cosine scorer (or `validation.embeddingsEndpoint` when `--embeddings` is passed), warning when similarity meets or exceeds `validation.semanticOverlapThreshold` (`0.72`). Pairs already flagged by `description-overlap` are not double-reported.
 - `numbered-steps` checks `## Instructions` (outside fenced code blocks) for `1. ...` list items or `### 1. ...` numbered subsections.
 - `error-recovery-table` checks `## Error Recovery` (or `## Troubleshooting`, outside fenced code blocks) for a Markdown table with a separator row (`| --- |`) and at least one body row.
 - `replaced-by-exists` verifies that `metadata.replaced-by` names another publishable skill in the library whose `metadata.status` is not `"deprecated"`.
@@ -191,7 +192,7 @@ skanvil validate --format sarif > skanvil.sarif
 
 ## CI
 
-Generated libraries already contain `.github/workflows/skills.yml`. For PR annotations and Code Scanning:
+Generated libraries already contain `.github/workflows/skills.yml`, or you can call the reusable composite GitHub Action (`action.yml` at the repository root) in PR and main-branch workflows to run validation, `eval triggers`, PR `diff --format markdown` comments, and opt-in telemetry snapshots. For PR annotations and Code Scanning:
 
 ```yaml
 - run: npm ci

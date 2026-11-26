@@ -14,7 +14,7 @@ import { checkbox, confirm, input, select } from "@inquirer/prompts";
 import pc from "picocolors";
 
 import { installAgentSkill } from "../core/agent-skill.js";
-import { resolveConfig, SKILL_STATUSES, type RawCategory } from "../core/config.js";
+import { CONFIG_FILE, resolveConfig, SKILL_STATUSES, type RawCategory } from "../core/config.js";
 import { doctor } from "../core/doctor.js";
 import { createLibrary } from "../core/init.js";
 import { Library } from "../core/library.js";
@@ -27,6 +27,7 @@ import {
   type TargetResult,
   type TargetScope
 } from "../core/sync.js";
+import { HOOK_AGENTS, installTelemetryHooks } from "../core/telemetry-hooks.js";
 import { validateLibrary } from "../core/validate.js";
 import { exists, isEmptyOrMissing } from "../util/fs.js";
 import { Output } from "../util/output.js";
@@ -690,6 +691,100 @@ async function agentSkillFlow(state: State): Promise<void> {
   showCommand(args);
 }
 
+async function telemetryFlow(library: Library | null, state: State): Promise<void> {
+  heading("Configure opt-in telemetry & agent usage hooks");
+  console.log(
+    pc.dim("  Telemetry only sends anonymized counts, budgets, and redacted friction to your own skanvil-hub.")
+  );
+
+  if (library) {
+    const updateRc = await confirm({
+      message: `Update telemetry settings in ${CONFIG_FILE}?`,
+      default: true
+    });
+    if (updateRc) {
+      const enabled = await confirm({
+        message: "Enable opt-in sync telemetry reporting?",
+        default: library.config.telemetry.enabled
+      });
+      const endpoint = await input({
+        message: "skanvil-hub base URL (blank to leave unset)",
+        default: library.config.telemetry.endpoint ?? "http://127.0.0.1:4318",
+        validate: (value) => {
+          const trimmed = value.trim();
+          if (!trimmed) return true;
+          try {
+            const parsed = new URL(trimmed);
+            if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+              return "URL must start with http:// or https://.";
+            }
+            return true;
+          } catch {
+            return "Enter a valid URL (for example https://skanvil-hub.internal) or leave blank.";
+          }
+        }
+      });
+
+      const rcPath = path.join(library.root, CONFIG_FILE);
+      let rawRc: Record<string, unknown> = {};
+      try {
+        rawRc = JSON.parse(await fs.readFile(rcPath, "utf8")) as Record<string, unknown>;
+      } catch {
+        rawRc = {};
+      }
+      const trimmedUrl = endpoint.trim().replace(/\/+$/, "");
+      const nextRc = {
+        ...rawRc,
+        telemetry: {
+          enabled,
+          ...(trimmedUrl ? { endpoint: trimmedUrl } : {})
+        }
+      };
+      resolveConfig(nextRc);
+      await fs.writeFile(rcPath, `${JSON.stringify(nextRc, null, 2)}\n`, "utf8");
+      console.log(pc.green(`✔ Updated ${displayPath(rcPath)}`));
+      if (trimmedUrl) {
+        console.log(pc.dim(`  If your hub requires an API key, export SKANVIL_TELEMETRY_KEY before running commands.`));
+      }
+    }
+  }
+
+  const installHooks = await confirm({
+    message: "Install non-blocking skill telemetry hooks for coding agents?",
+    default: true
+  });
+  if (!installHooks) return;
+
+  const where = await select({
+    message: "Install hooks where?",
+    choices: [
+      { value: "project", name: `In this folder ${pc.dim(state.cwd)}` },
+      { value: "user", name: "For my user, available in every project" }
+    ]
+  });
+  const scope: TargetScope = where === "user" ? "user" : "project";
+  const targets = await checkbox({
+    message: "Install hooks for which agents?",
+    required: true,
+    choices: HOOK_AGENTS.map((agent) => ({
+      value: agent,
+      name: agent,
+      checked: agent === "claude" || agent === "cursor" || agent === "gemini"
+    }))
+  });
+
+  const result = await installTelemetryHooks({ dest: state.cwd, scope, targets });
+  for (const item of result.results) {
+    console.log(pc.green(`  ✔ ${item.agent}: ${item.status} (${displayPath(item.file)})`));
+  }
+
+  const args = ["telemetry", "install-hooks"];
+  if (scope === "user") args.push("--global");
+  else if (path.resolve(process.cwd()) !== state.cwd) args.push(displayPath(state.cwd));
+  args.push("--target", targets.join(","));
+  showCommand(args);
+}
+
 // ---------------------------------------------------------------------------------------------
 // Main menu
 // ---------------------------------------------------------------------------------------------
@@ -735,6 +830,7 @@ export async function wizardCommand(options: WizardOptions = {}): Promise<number
             { value: "eval", name: "Check trigger routing (eval triggers)" },
             { value: "sync", name: "Install the skills into a project or for my user" },
             { value: "agent", name: "Install or update the skanvil agent skill" },
+            { value: "telemetry", name: "Configure telemetry & install agent hooks" },
             { value: "exit", name: "Exit" }
           ]
         });
@@ -745,6 +841,7 @@ export async function wizardCommand(options: WizardOptions = {}): Promise<number
             { value: "init", name: "Create a new skills library" },
             { value: "sync-from", name: "Install skills from a library into this folder" },
             { value: "agent", name: "Install or update the skanvil agent skill" },
+            { value: "telemetry", name: "Configure telemetry & install agent hooks" },
             { value: "exit", name: "Exit" }
           ]
         });
@@ -759,6 +856,7 @@ export async function wizardCommand(options: WizardOptions = {}): Promise<number
         if (action === "init") await createLibraryFlow(state);
         else if (action === "sync-from") await syncFromFlow(state);
         else if (action === "agent") await agentSkillFlow(state);
+        else if (action === "telemetry") await telemetryFlow(library, state);
         else if (library && action === "add") await addSkillFlow(library);
         else if (library && action === "edit") await editSkillFlow(library);
         else if (library && action === "list") await listCommand({ cwd: library.root });

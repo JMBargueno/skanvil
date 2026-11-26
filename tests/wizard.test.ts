@@ -294,4 +294,15 @@ describe("inside a library", () => {
     expect(out).toMatch(/skanvil eval triggers/);
     expect(fs.readFileSync(path.join(root, "skills", "front-a", "SKILL.md"), "utf8")).toMatch(/replaced-by: front-b/);
   });
+
+  test("configures telemetry in .skanvilrc.json and installs coding agent hooks", async () => {
+    const root = await library();
+    await run(root, "telemetry", true, true, "http://127.0.0.1:4318/", true, "project", ["claude", "copilot"], "exit");
+
+    const rc = JSON.parse(fs.readFileSync(path.join(root, ".skanvilrc.json"), "utf8"));
+    expect(rc.telemetry).toEqual({ enabled: true, endpoint: "http://127.0.0.1:4318" });
+    expect(fs.existsSync(path.join(root, ".claude", "settings.json"))).toBe(true);
+    expect(fs.existsSync(path.join(root, ".github", "hooks", "skanvil-telemetry.json"))).toBe(true);
+    expect(text()).toMatch(/skanvil telemetry install-hooks .*--target claude,copilot/);
+  });
 });
