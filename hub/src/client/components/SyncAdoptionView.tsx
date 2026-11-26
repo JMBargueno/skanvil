@@ -6,7 +6,7 @@ export function SyncAdoptionView({ data }: { data: AdoptionResponse }) {
   return (
     <div className="stack-col">
       {data.deprecatedInstalled.length > 0 && (
-        <div className="card" style={{ borderColor: "rgba(244, 63, 94, 0.5)" }}>
+        <div className="card card-danger">
           <div className="card-header">
             <h3 className="card-title" style={{ color: "var(--danger)" }}>
               Deprecated Skills Still Installed ({data.deprecatedInstalled.length})

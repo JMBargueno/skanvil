@@ -2,6 +2,24 @@ import { z } from "zod";
 
 export const TELEMETRY_SCHEMA_VERSION = 1;
 
+export const FEEDBACK_STATUSES = ["open", "triaged", "resolved"] as const;
+export type FeedbackStatus = (typeof FEEDBACK_STATUSES)[number];
+export const FeedbackStatusSchema = z.enum(FEEDBACK_STATUSES);
+
+export const FeedbackTriageRequestSchema = z
+  .object({
+    groupKey: z.string().min(1),
+    library: z.string().min(1),
+    skill: z.string().min(1),
+    step: z.string().min(1),
+    symptom: z.string().min(1),
+    status: FeedbackStatusSchema,
+    note: z.string().max(1000).optional()
+  })
+  .strict();
+
+export type FeedbackTriageRequest = z.infer<typeof FeedbackTriageRequestSchema>;
+
 const IsoTimestampSchema = z
   .string()
   .min(1)
@@ -248,6 +266,7 @@ export interface BudgetsResponse {
 }
 
 export interface FeedbackGroupRow {
+  groupKey: string;
   library: string;
   skill: string;
   step: string;
@@ -256,6 +275,9 @@ export interface FeedbackGroupRow {
   suggestedEvalCaseCount: number;
   proposedFixes: string[];
   latestTimestamp: string;
+  status: FeedbackStatus;
+  note: string | null;
+  updatedAt: string | null;
 }
 
 export interface FeedbackEventRow {
@@ -311,4 +333,22 @@ export interface AuthStatusResponse {
   authRequired: boolean;
   authenticated: boolean;
   ingestionProtected: boolean;
+}
+
+export interface SkillDetailResponse {
+  library: string;
+  skill: string;
+  days: number;
+  summary: SkillAnalyticsRow | null;
+  daily: OverviewDailyPoint[];
+  byAgent: BreakdownItem[];
+  byModel: BreakdownItem[];
+  feedback: FeedbackGroupRow[];
+  syncedProjects: ProjectSyncRow[];
+}
+
+export interface RetentionResult {
+  deletedEvents: number;
+  deletedSnapshots: number;
+  cutoffIso: string;
 }

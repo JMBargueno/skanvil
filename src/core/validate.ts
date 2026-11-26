@@ -9,7 +9,7 @@ import path from "node:path";
 import { isMap, isScalar } from "yaml";
 
 import { listFiles } from "../util/fs.js";
-import { SKILL_STATUSES, type Severity } from "./config.js";
+import { DEFAULT_SEMANTIC_OVERLAP_THRESHOLD, SKILL_STATUSES, type Severity } from "./config.js";
 import { EVALS_FILE, type SkillEvals } from "./evals.js";
 import type { Library } from "./library.js";
 import { escapeRegex, KEBAB_CASE_PATTERN } from "./naming.js";
@@ -22,7 +22,15 @@ import {
 } from "./params.js";
 import { SkillFile } from "./skill.js";
 import { TEMPLATE_BOILERPLATE } from "./templates.js";
-import { estimateTokens, extractSection, jaccardSimilarity, stripFencedCode, tokenizeForSimilarity } from "./text.js";
+import {
+  cosineSimilarity,
+  estimateTokens,
+  extractSection,
+  jaccardSimilarity,
+  semanticSimilarity,
+  stripFencedCode,
+  tokenizeForSimilarity
+} from "./text.js";
 
 /** Severity of a reported diagnostic (rules set to `off` report nothing). */
 export type DiagnosticSeverity = Exclude<Severity, "off">;
@@ -147,6 +155,11 @@ export const RULES: Record<string, RuleDefinition> = {
     severity: "warn",
     description: "Validated skills have distinct descriptions to avoid routing collisions."
   },
+  "semantic-overlap": {
+    severity: "warn",
+    description:
+      "Validated skills avoid semantically overlapping descriptions (synonym paraphrases or optional embedding proximity)."
+  },
   "always-loaded-budget": {
     severity: "warn",
     description:
@@ -248,6 +261,8 @@ export interface ValidateOptions {
   maxAlwaysLoadedTokens?: number;
   /** Jaccard similarity threshold (0.1-1.0) for `description-overlap`. */
   overlapThreshold: number;
+  /** Semantic similarity threshold (0.1-1.0) for `semantic-overlap`. */
+  semanticOverlapThreshold?: number;
   /** Vague error-recovery phrases flagged by `vague-fallback`. */
   vagueFallbacks: string[];
 }
@@ -753,6 +768,75 @@ export interface ValidationResult {
 export interface ValidateLibraryOptions {
   /** Only report diagnostics of this skill folder. The whole library is still read. */
   skill?: string;
+  /** Compare descriptions via dense vector embeddings (uses `validation.embeddingsEndpoint` or `SKANVIL_EMBEDDINGS_URL`). */
+  embeddings?: boolean;
+  /** Override embeddings endpoint URL. */
+  embeddingsEndpoint?: string;
+  /** Optional Bearer API key for the embeddings endpoint (`SKANVIL_EMBEDDINGS_KEY` or `OPENAI_API_KEY`). */
+  embeddingsApiKey?: string;
+  /** Optional custom embedding callback (avoids network requests in tests or custom integrations). */
+  embedFn?: (texts: string[]) => Promise<number[][]>;
+}
+
+/**
+ * Fetches dense embedding vectors from an OpenAI-compatible (`/v1/embeddings`) or Ollama
+ * (`/api/embed`, `/api/embeddings`) HTTP endpoint using built-in `fetch`.
+ *
+ * @param endpoint - Full URL of the embeddings endpoint.
+ * @param texts - Descriptions to embed.
+ * @param options - Optional Bearer key, model override, and timeout in ms.
+ * @returns One embedding vector per input string.
+ * @throws Error when the endpoint returns a non-OK HTTP status or an unexpected response shape.
+ */
+export async function fetchEmbeddings(
+  endpoint: string,
+  texts: readonly string[],
+  options: { apiKey?: string; model?: string; timeoutMs?: number } = {}
+): Promise<number[][]> {
+  if (texts.length === 0) return [];
+  const cleanUrl = endpoint.trim();
+  const isOllama = /\/api\/embed(?:dings)?$/i.test(cleanUrl);
+  const headers: Record<string, string> = { "content-type": "application/json" };
+  if (options.apiKey) headers.authorization = `Bearer ${options.apiKey}`;
+
+  if (isOllama && /\/api\/embeddings$/i.test(cleanUrl)) {
+    const out: number[][] = [];
+    for (const prompt of texts) {
+      const res = await fetch(cleanUrl, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ model: options.model || "nomic-embed-text", prompt }),
+        signal: AbortSignal.timeout(options.timeoutMs ?? 15_000)
+      });
+      if (!res.ok) throw new Error(`Embeddings HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+      const data = (await res.json()) as { embedding?: number[] };
+      if (!Array.isArray(data.embedding)) throw new Error("Embeddings endpoint returned invalid Ollama payload.");
+      out.push(data.embedding);
+    }
+    return out;
+  }
+
+  const res = await fetch(cleanUrl, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      model: options.model || (isOllama ? "nomic-embed-text" : "text-embedding-3-small"),
+      input: texts
+    }),
+    signal: AbortSignal.timeout(options.timeoutMs ?? 15_000)
+  });
+  if (!res.ok) throw new Error(`Embeddings HTTP ${res.status}: ${(await res.text()).slice(0, 200)}`);
+  const data = (await res.json()) as {
+    data?: Array<{ embedding?: number[] }>;
+    embeddings?: number[][];
+  };
+  if (Array.isArray(data.embeddings) && data.embeddings.length === texts.length) {
+    return data.embeddings;
+  }
+  if (Array.isArray(data.data) && data.data.length === texts.length) {
+    return data.data.map((item) => item.embedding ?? []);
+  }
+  throw new Error("Embeddings endpoint returned an unexpected JSON shape.");
 }
 
 /**
@@ -921,6 +1005,7 @@ export async function validateLibrary(
     }
   }
 
+  const lexicalOverlapPairs = new Set<string>();
   for (let i = 0; i < stage1Summaries.length; i += 1) {
     const a = stage1Summaries[i];
     if (a.uniqueTokens.length < 3) continue;
@@ -929,9 +1014,59 @@ export async function validateLibrary(
       if (b.uniqueTokens.length < 3) continue;
       const similarity = jaccardSimilarity(a.uniqueTokens, b.uniqueTokens);
       if (similarity >= ruleOptions.overlapThreshold) {
+        lexicalOverlapPairs.add(`${a.folder}\0${b.folder}`);
         collector.add(
           "description-overlap",
           `description closely overlaps with '${a.folder}' (${Math.round(similarity * 100)}% lexical similarity); sharpen trigger boundaries`,
+          b.folder
+        );
+      }
+    }
+  }
+
+  const semanticThreshold = ruleOptions.semanticOverlapThreshold ?? DEFAULT_SEMANTIC_OVERLAP_THRESHOLD;
+  let embeddingVectors: number[][] | null = null;
+  if ((options.embeddings || options.embedFn) && stage1Summaries.length > 1) {
+    const inputs = stage1Summaries.map((item) => (item.description ? `${item.name}: ${item.description}` : item.name));
+    if (options.embedFn) {
+      embeddingVectors = await options.embedFn(inputs);
+    } else {
+      const endpoint =
+        options.embeddingsEndpoint?.trim() ||
+        process.env.SKANVIL_EMBEDDINGS_URL?.trim() ||
+        library.config.validation.embeddingsEndpoint;
+      if (!endpoint) {
+        throw new Error(
+          "Embeddings URL not configured. Set validation.embeddingsEndpoint in .skanvilrc.json or SKANVIL_EMBEDDINGS_URL."
+        );
+      }
+      const apiKey =
+        options.embeddingsApiKey?.trim() ||
+        process.env.SKANVIL_EMBEDDINGS_KEY?.trim() ||
+        process.env.OPENAI_API_KEY?.trim();
+      embeddingVectors = await fetchEmbeddings(endpoint, inputs, { apiKey });
+    }
+  }
+
+  for (let i = 0; i < stage1Summaries.length; i += 1) {
+    const a = stage1Summaries[i];
+    if (a.uniqueTokens.length < 3) continue;
+    for (let j = i + 1; j < stage1Summaries.length; j += 1) {
+      const b = stage1Summaries[j];
+      if (b.uniqueTokens.length < 3) continue;
+      if (lexicalOverlapPairs.has(`${a.folder}\0${b.folder}`)) continue;
+
+      const sim = embeddingVectors
+        ? cosineSimilarity(embeddingVectors[i], embeddingVectors[j])
+        : semanticSimilarity(
+            a.description ? `${a.name} ${a.description}` : a.name,
+            b.description ? `${b.name} ${b.description}` : b.name
+          );
+      if (sim >= semanticThreshold) {
+        const modeLabel = embeddingVectors ? "embedding similarity" : "semantic similarity";
+        collector.add(
+          "semantic-overlap",
+          `description semantically overlaps with '${a.folder}' (${Math.round(sim * 100)}% ${modeLabel}); distinguish trigger intents`,
           b.folder
         );
       }

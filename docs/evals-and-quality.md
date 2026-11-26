@@ -215,7 +215,23 @@ Example outputs:
 
 With `--strict`, `skanvil eval triggers` exits `1` whenever a `shouldTrigger` prompt fails to rank its skill `#1` (or ties with another skill), or when a `shouldNotTrigger` prompt falsely routes to the skill. Deprecated skills are excluded from the routing index so retired descriptions stop interfering with active skills.
 
-> **Scope note:** Offline BM25 checks catch lexical collisions and missing keywords fast and free. Semantic paraphrasing and full multi-turn instruction adherence are tested by exporting to an LLM runner.
+> **Scope note:** Offline BM25 checks catch lexical collisions and missing keywords fast and free. Semantic paraphrasing and full multi-turn instruction adherence are tested either directly with `skanvil eval run` or by exporting to Promptfoo.
+
+### Running LLM evals natively
+
+Run `evals.json` cases directly against an LLM provider without external tooling:
+
+```bash
+skanvil eval run --provider mock --ablation               # offline smoke test with blind ablation
+skanvil eval run --provider openai --model gpt-4o-mini --judge --emit-telemetry
+skanvil eval run --provider anthropic --split eval --strict
+skanvil eval run --provider gemini --case cold-start
+skanvil eval run --provider ollama --base-url http://127.0.0.1:11434/v1 --model llama3.2
+```
+
+- `--ablation` runs every case twice (`withSkill` injecting the target `SKILL.md` vs. `withoutSkill` baseline) and computes the pass-rate delta.
+- `--judge` uses the configured provider as an LLM judge to evaluate free-form rubric assertions alongside deterministic regex/substring checks.
+- `--emit-telemetry` sends a `skill.invoked` telemetry event per evaluated case (`agent: "eval:<provider>"`, or queues it locally) to your `skanvil-hub` endpoint.
 
 ### Exporting for LLM runners & blind ablation
 

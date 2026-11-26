@@ -175,3 +175,170 @@ export function jaccardSimilarity(tokensA: readonly string[], tokensB: readonly 
   const union = a.size + b.size - intersection;
   return union === 0 ? 0 : intersection / union;
 }
+
+const SEMANTIC_SYNONYMS: Record<string, string> = {
+  audit: "review",
+  review: "review",
+  inspect: "review",
+  check: "review",
+  verify: "review",
+  lint: "review",
+  validat: "review",
+  db: "database",
+  database: "database",
+  sql: "database",
+  postgres: "database",
+  postgresql: "database",
+  mysql: "database",
+  sqlite: "database",
+  schema: "schema",
+  migrat: "migration",
+  migration: "migration",
+  auth: "auth",
+  authenticat: "auth",
+  authoriz: "auth",
+  login: "auth",
+  oauth: "auth",
+  jwt: "auth",
+  sso: "auth",
+  a11y: "a11y",
+  accessib: "a11y",
+  wcag: "a11y",
+  aria: "a11y",
+  ui: "frontend",
+  frontend: "frontend",
+  front: "frontend",
+  react: "frontend",
+  component: "frontend",
+  view: "frontend",
+  api: "api",
+  http: "api",
+  rest: "api",
+  endpoint: "api",
+  graphql: "api",
+  perf: "performance",
+  performanc: "performance",
+  latenc: "performance",
+  speed: "performance",
+  optimiz: "performance",
+  sec: "security",
+  secur: "security",
+  vulnerabil: "security",
+  cve: "security",
+  secret: "security",
+  deploy: "deploy",
+  releas: "deploy",
+  publish: "deploy",
+  pipelin: "deploy",
+  test: "eval",
+  eval: "eval",
+  evaluat: "eval",
+  benchmark: "eval",
+  bug: "issue",
+  issue: "issue",
+  friction: "issue",
+  error: "issue",
+  failur: "issue",
+  log: "report",
+  record: "report",
+  report: "report",
+  track: "report",
+  index: "index",
+  tabl: "index"
+};
+
+function stemToken(token: string): string {
+  let stem = token;
+  if (stem.length > 5 && stem.endsWith("ation")) stem = stem.slice(0, -5);
+  else if (stem.length > 4 && stem.endsWith("ies")) stem = `${stem.slice(0, -3)}y`;
+  else if (stem.length > 4 && stem.endsWith("ing")) stem = stem.slice(0, -3);
+  else if (stem.length > 4 && stem.endsWith("ed")) stem = stem.slice(0, -2);
+  else if (stem.length > 4 && stem.endsWith("es")) stem = stem.slice(0, -2);
+  else if (stem.length > 3 && stem.endsWith("s") && !stem.endsWith("ss")) stem = stem.slice(0, -1);
+  return SEMANTIC_SYNONYMS[stem] ?? SEMANTIC_SYNONYMS[token] ?? stem;
+}
+
+/**
+ * Normalizes text into stemmed, synonym-canonicalized semantic tokens for paraphrase detection.
+ *
+ * @param text - Input text such as a skill `name` and `description`.
+ * @returns Sequence of canonical semantic tokens.
+ */
+export function canonicalizeSemanticTokens(text: string): string[] {
+  return tokenizeForSimilarity(text).map(stemToken);
+}
+
+function sparseCosine(itemsA: readonly string[], itemsB: readonly string[]): number {
+  if (itemsA.length === 0 || itemsB.length === 0) return 0;
+  const freqA = new Map<string, number>();
+  const freqB = new Map<string, number>();
+  for (const item of itemsA) freqA.set(item, (freqA.get(item) ?? 0) + 1);
+  for (const item of itemsB) freqB.set(item, (freqB.get(item) ?? 0) + 1);
+
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (const [key, countA] of freqA) {
+    normA += countA * countA;
+    const countB = freqB.get(key);
+    if (countB) dot += countA * countB;
+  }
+  for (const countB of freqB.values()) normB += countB * countB;
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+function charTrigrams(text: string): string[] {
+  const cleaned = text
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+  if (cleaned.length < 3) return [];
+  const out: string[] = [];
+  for (let i = 0; i <= cleaned.length - 3; i += 1) {
+    out.push(cleaned.slice(i, i + 3));
+  }
+  return out;
+}
+
+/**
+ * Computes cosine similarity (`dot(A, B) / (|A| |B|)`) between two dense numeric vectors.
+ *
+ * @param vecA - First embedding vector.
+ * @param vecB - Second embedding vector (must match length of `vecA`).
+ * @returns Similarity in `[-1, 1]`, or `0` when vectors are empty or zero-norm.
+ * @throws Error when vector dimensions differ.
+ */
+export function cosineSimilarity(vecA: readonly number[], vecB: readonly number[]): number {
+  if (vecA.length !== vecB.length) {
+    throw new Error(`Embedding dimension mismatch (${vecA.length} vs ${vecB.length}).`);
+  }
+  if (vecA.length === 0) return 0;
+  let dot = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i += 1) {
+    dot += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dot / (Math.sqrt(normA) * Math.sqrt(normB));
+}
+
+/**
+ * Computes hybrid offline semantic similarity in `[0, 1]` combining stemmed synonym-canonicalized
+ * token cosine similarity (`75%`) and character 3-gram cosine similarity (`25%`).
+ *
+ * @param textA - First description string.
+ * @param textB - Second description string.
+ * @returns Semantic similarity score in `[0, 1]`.
+ */
+export function semanticSimilarity(textA: string, textB: string): number {
+  const tokensA = canonicalizeSemanticTokens(textA);
+  const tokensB = canonicalizeSemanticTokens(textB);
+  if (new Set(tokensA).size < 3 || new Set(tokensB).size < 3) return 0;
+  const tokenScore = sparseCosine(tokensA, tokensB);
+  const trigramScore = sparseCosine(charTrigrams(tokensA.join(" ")), charTrigrams(tokensB.join(" ")));
+  return 0.75 * tokenScore + 0.25 * trigramScore;
+}

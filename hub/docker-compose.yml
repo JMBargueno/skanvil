@@ -1,5 +1,7 @@
 services:
   skanvil-hub:
+    # For released deployments without local builds, replace `build:` with:
+    # image: ghcr.io/jmbargueno/skanvil-hub:latest
     build:
       context: .
       dockerfile: Dockerfile

@@ -2,12 +2,33 @@ import { serve } from "@hono/node-server";
 
 import { createHubApp } from "./app.js";
 import { loadHubConfig } from "./config.js";
-import { SqliteTelemetryStore } from "./store/sqlite.js";
+import { createTelemetryStore } from "./store/factory.js";
+
+const DAY_MS = 24 * 60 * 60 * 1000;
 
 async function main(): Promise<void> {
   const config = loadHubConfig();
-  const store = new SqliteTelemetryStore(config.dbPath);
+  const store = createTelemetryStore(config);
   await store.init();
+
+  let retentionTimer: NodeJS.Timeout | null = null;
+  if (config.retentionDays !== undefined) {
+    const runPrune = async () => {
+      try {
+        const res = await store.pruneOldData(config.retentionDays!);
+        if (res.deletedEvents > 0 || res.deletedSnapshots > 0) {
+          console.log(
+            `Retention prune (${config.retentionDays}d): removed ${res.deletedEvents} event(s), ${res.deletedSnapshots} snapshot(s).`
+          );
+        }
+      } catch (error) {
+        console.error("Retention prune failed:", error);
+      }
+    };
+    await runPrune();
+    retentionTimer = setInterval(() => void runPrune(), DAY_MS);
+    retentionTimer.unref();
+  }
 
   const app = createHubApp(store, config);
   const server = serve({
@@ -19,8 +40,9 @@ async function main(): Promise<void> {
   const displayHost = config.host === "0.0.0.0" ? "127.0.0.1" : config.host;
   const authSummary = config.adminToken ? "admin-token enabled" : "open local dev mode";
   const ingestSummary = config.apiKeys.length > 0 ? `${config.apiKeys.length} API key(s)` : "open ingestion";
+  const storageSummary = config.databaseUrl ? "PostgreSQL" : `SQLite (${config.dbPath})`;
   console.log(
-    `skanvil-hub listening on http://${displayHost}:${config.port} (db: ${config.dbPath}, ${authSummary}, ${ingestSummary})`
+    `skanvil-hub listening on http://${displayHost}:${config.port} (store: ${storageSummary}, ${authSummary}, ${ingestSummary})`
   );
 
   let closing = false;
@@ -28,6 +50,7 @@ async function main(): Promise<void> {
     if (closing) return;
     closing = true;
     console.log(`Received ${signal}, shutting down skanvil-hub...`);
+    if (retentionTimer) clearInterval(retentionTimer);
     await new Promise<void>((resolve) => {
       server.close(() => resolve());
     });

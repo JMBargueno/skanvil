@@ -11,10 +11,10 @@ src/
 ├── commands/              thin CLI layer: options → core call → text or JSON output
 │   ├── shared.ts          --cwd handling, diagnostic printing, post-mutation validation
 │   ├── skills.ts          add, edit (including lifecycle), list (with filters), import
-│   ├── library.ts         init, validate, diff, index, doctor, stats, templates eject, build, install-skill, sync
-│   ├── evals.ts           eval triggers, eval route, eval export
+│   ├── library.ts         init, validate, diff, index, doctor, stats, templates eject, build, install-skill, sync, outdated
+│   ├── evals.ts           eval triggers, eval route, eval run, eval export
 │   ├── feedback.ts        feedback list, feedback promote, feedback push
-│   ├── telemetry.ts       telemetry snapshot, emit, hook, push, install-hooks
+│   ├── telemetry.ts       telemetry snapshot, emit, hook, push, install-hooks, ingest-transcripts, audit
 │   └── wizard.ts          interactive menu-driven assistant on top of the same core calls
 ├── core/                  all behaviour; no console output, no process exit
 │   ├── config.ts          .skanvilrc.json zod schema, default preset, resolution and checks
@@ -27,6 +27,7 @@ src/
 │   ├── validate-format.ts GitHub Actions annotations (`::error`/`::warning`) and SARIF 2.1.0 formatters
 │   ├── stats.ts           3-stage context-budget analyzer (`name`+`description`, body, resources)
 │   ├── evals.ts           evals.json schema, offline BM25 trigger checker/router, JSON/Promptfoo exporter
+│   ├── eval-runner.ts     native multi-provider LLM eval runner (--ablation, --judge, mock)
 │   ├── feedback.ts        .skanvil-feedback.jsonl parser, deduplication summarizer, and evals.json promoter
 │   ├── telemetry.ts       opt-in v1 telemetry schemas, redaction, offline queue, fetch transport & event builders
 │   ├── telemetry-hooks.ts Claude/Cursor/Gemini stdin hook parser and idempotent settings installer
@@ -53,7 +54,8 @@ templates/
 └── skill/                 default skill: SKILL.md + assets/, references/, scripts/
 
 tests/                     vitest: unit, core end-to-end, params/build, wizard and real-CLI suites
-hub/                       isolated self-hosted skanvil-hub (Hono + node:sqlite + React/Vite + Docker; excluded from npm)
+action.yml                 reusable composite GitHub Action for PR validation, diff comments, and telemetry snapshots
+hub/                       isolated self-hosted skanvil-hub (Hono + SQLite/PostgreSQL + alerts + React/Vite + GHCR Docker; excluded from npm)
 scripts/build-schema.mjs   writes schema.json from the zod schema after the build
 docs/                      user guides (docs/assets is not published to npm)
 .github/workflows/         ci.yml (lint, format, typecheck, build, test) and release.yml (release-please PR + npm publish after green CI on main)

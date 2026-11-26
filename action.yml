@@ -1,0 +1,138 @@
+name: skanvil-ci
+description: Validate Agent Skills libraries, run offline trigger routing checks, comment PR diffs, and publish opt-in skanvil-hub snapshots.
+author: Jose Manuel Bargueño López
+branding:
+  icon: check-circle
+  color: indigo
+
+inputs:
+  working-directory:
+    description: Skills library directory relative to the repository root.
+    required: false
+    default: "."
+  skanvil-version:
+    description: npm tag or version of skanvil to run via npx.
+    required: false
+    default: "latest"
+  strict:
+    description: Fail on validation and trigger routing warnings when true.
+    required: false
+    default: "true"
+  validate-format:
+    description: Output format for skanvil validate (text, github, sarif, json).
+    required: false
+    default: "github"
+  run-eval-triggers:
+    description: Run skanvil eval triggers to catch Stage-1 routing collisions.
+    required: false
+    default: "true"
+  comment-diff:
+    description: Post or update a PR comment with skanvil diff --format markdown.
+    required: false
+    default: "true"
+  base-ref:
+    description: Optional Git base ref for skanvil diff (defaults to PR base branch).
+    required: false
+    default: ""
+  publish-snapshot:
+    description: Run skanvil telemetry snapshot on push events when telemetry is configured.
+    required: false
+    default: "false"
+  telemetry-url:
+    description: Optional skanvil-hub base URL (sets SKANVIL_TELEMETRY_URL).
+    required: false
+    default: ""
+  telemetry-key:
+    description: Optional skanvil-hub Bearer ingestion key (sets SKANVIL_TELEMETRY_KEY).
+    required: false
+    default: ""
+  github-token:
+    description: GitHub token used for commenting on pull requests.
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  diff-markdown-path:
+    description: Path to the generated skanvil diff Markdown file (when comment-diff ran on a PR).
+    value: ${{ steps.diff.outputs.diff_path }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: "22"
+
+    - name: Validate skills library
+      shell: bash
+      run: |
+        ARGS=("skanvil@${{ inputs.skanvil-version }}" validate -C "${{ inputs.working-directory }}" --format "${{ inputs.validate-format }}")
+        if [ "${{ inputs.strict }}" = "true" ]; then
+          ARGS+=(--strict)
+        fi
+        npx --yes "${ARGS[@]}"
+
+    - name: Check offline trigger routing
+      if: inputs.run-eval-triggers == 'true'
+      shell: bash
+      run: |
+        ARGS=("skanvil@${{ inputs.skanvil-version }}" eval triggers -C "${{ inputs.working-directory }}")
+        if [ "${{ inputs.strict }}" = "true" ]; then
+          ARGS+=(--strict)
+        fi
+        npx --yes "${ARGS[@]}"
+
+    - name: Generate library diff for PR
+      id: diff
+      if: github.event_name == 'pull_request' && inputs.comment-diff == 'true'
+      shell: bash
+      run: |
+        BASE_REF="${{ inputs.base-ref }}"
+        if [ -z "$BASE_REF" ] && [ -n "${{ github.event.pull_request.base.ref }}" ]; then
+          git fetch --no-tags --depth=50 origin "${{ github.event.pull_request.base.ref }}" >/dev/null 2>&1 || true
+          BASE_REF="origin/${{ github.event.pull_request.base.ref }}"
+        fi
+        OUT_PATH="${RUNNER_TEMP}/skanvil-diff.md"
+        printf '<!-- skanvil-diff-comment -->\n' > "$OUT_PATH"
+        ARGS=("skanvil@${{ inputs.skanvil-version }}" diff)
+        if [ -n "$BASE_REF" ]; then
+          ARGS+=("$BASE_REF")
+        fi
+        ARGS+=(-C "${{ inputs.working-directory }}" --format markdown)
+        npx --yes "${ARGS[@]}" >> "$OUT_PATH"
+        echo "diff_path=$OUT_PATH" >> "$GITHUB_OUTPUT"
+
+    - name: Upsert PR diff comment
+      if: github.event_name == 'pull_request' && inputs.comment-diff == 'true' && steps.diff.outputs.diff_path != ''
+      uses: actions/github-script@v7
+      with:
+        github-token: ${{ inputs.github-token }}
+        script: |
+          const fs = require("node:fs");
+          const body = fs.readFileSync(process.env.DIFF_PATH, "utf8");
+          const marker = "<!-- skanvil-diff-comment -->";
+          const { owner, repo } = context.repo;
+          const issue_number = context.issue.number;
+          const comments = await github.paginate(github.rest.issues.listComments, {
+            owner,
+            repo,
+            issue_number,
+            per_page: 100
+          });
+          const existing = comments.find((c) => typeof c.body === "string" && c.body.includes(marker));
+          if (existing) {
+            await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body });
+          } else {
+            await github.rest.issues.createComment({ owner, repo, issue_number, body });
+          }
+      env:
+        DIFF_PATH: ${{ steps.diff.outputs.diff_path }}
+
+    - name: Publish telemetry snapshot
+      if: github.event_name == 'push' && (inputs.publish-snapshot == 'true' || inputs.telemetry-url != '')
+      shell: bash
+      env:
+        SKANVIL_TELEMETRY_URL: ${{ inputs.telemetry-url }}
+        SKANVIL_TELEMETRY_KEY: ${{ inputs.telemetry-key }}
+      run: npx --yes "skanvil@${{ inputs.skanvil-version }}" telemetry snapshot -C "${{ inputs.working-directory }}" --no-queue

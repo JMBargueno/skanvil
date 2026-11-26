@@ -15,6 +15,13 @@ import {
   type EvalExportFormat,
   type EvalSplit
 } from "../core/evals.js";
+import { runEvalCases, type EvalProvider } from "../core/eval-runner.js";
+import {
+  buildSkillInvokedEvent,
+  libraryDisplayName,
+  resolveTelemetrySettings,
+  sendTelemetryEvents
+} from "../core/telemetry.js";
 import { Output } from "../util/output.js";
 import { displayPath } from "../util/paths.js";
 import { openLibrary, type CommonOptions } from "./shared.js";
@@ -160,4 +167,124 @@ export async function evalRouteCommand(prompt: string, options: EvalRouteCommand
   }
   out.info(`Matched ${result.candidates.length} of ${result.totalSkills} routable skill(s).`);
   return 0;
+}
+
+/** Options of `skanvil eval run`. */
+export interface EvalRunCommandOptions extends CommonOptions {
+  /** `--provider`: `openai`, `anthropic`, `gemini`, `ollama`, or `mock`. */
+  provider?: EvalProvider | string;
+  /** `--model`: override model name. */
+  model?: string;
+  /** `--base-url`: override provider endpoint base URL. */
+  baseUrl?: string;
+  /** `--api-key`: override provider API key. */
+  apiKey?: string;
+  /** `--skill`: run cases only for this skill folder. */
+  skill?: string;
+  /** `--split`: run cases tagged `train` or `eval`. */
+  split?: EvalSplit;
+  /** `--case`: run one specific case id. */
+  case?: string;
+  /** `--ablation`: run with-skill vs without-skill baseline comparison. */
+  ablation?: boolean;
+  /** `--judge`: grade `expected` criteria via an LLM judge pass. */
+  judge?: boolean;
+  /** `--strict`: exit with code 1 when any case fails. */
+  strict?: boolean;
+  /** `--emit-telemetry`: send `skill.invoked` results per evaluated skill to `skanvil-hub`. */
+  emitTelemetry?: boolean;
+  /** `--endpoint`: override `skanvil-hub` base URL when `--emit-telemetry` is set. */
+  endpoint?: string;
+  /** `--telemetry-key`: override `SKANVIL_TELEMETRY_KEY` when `--emit-telemetry` is set. */
+  telemetryKey?: string;
+}
+
+/**
+ * `skanvil eval run`: executes `evals.json` cases against a pluggable LLM provider (`openai`,
+ * `anthropic`, `gemini`, `ollama`, or deterministic `mock`), with optional `--ablation` and
+ * `--judge` scoring.
+ *
+ * @param options - Parsed CLI options.
+ * @returns Exit code (`0`, or `1` when `--strict` and any case failed).
+ */
+export async function evalRunCommand(options: EvalRunCommandOptions): Promise<number> {
+  const library = await openLibrary(options);
+  const out = new Output("eval", options.json);
+  const result = await runEvalCases(library, {
+    provider: options.provider,
+    model: options.model,
+    baseUrl: options.baseUrl,
+    apiKey: options.apiKey,
+    skill: options.skill,
+    split: options.split,
+    caseId: options.case,
+    ablation: options.ablation,
+    judge: options.judge
+  });
+
+  if (options.emitTelemetry && result.cases.length > 0) {
+    const telemetry = resolveTelemetrySettings(library.config, {
+      endpoint: options.endpoint,
+      apiKey: options.telemetryKey
+    });
+    const libName = libraryDisplayName(library);
+    const events = result.cases.map((item) =>
+      buildSkillInvokedEvent({
+        skill: item.skill,
+        library: libName,
+        agent: `eval:${result.provider}`,
+        model: result.model,
+        projectPath: library.root,
+        outcome: item.passed ? "success" : "error",
+        durationMs: item.durationMs,
+        source: "cli"
+      })
+    );
+    await sendTelemetryEvents(events, telemetry, { queueOnFailure: true }).catch(() => undefined);
+  }
+
+  if (options.json) {
+    console.log(JSON.stringify({ ok: result.failed === 0, ...result }, null, 2));
+    return options.strict && result.failed > 0 ? 1 : 0;
+  }
+
+  if (result.total === 0) {
+    out.info("No matching eval cases found in evals.json.");
+    return 0;
+  }
+
+  for (const item of result.cases) {
+    const label = `${item.skill}/${item.caseId}`;
+    const liftNote =
+      item.ablation !== undefined
+        ? ` [ablation lift ${item.ablation.lift > 0 ? `+${item.ablation.lift}` : item.ablation.lift}]`
+        : "";
+    if (item.passed) {
+      out.print(`   ✔ ${label}${liftNote} (${item.durationMs}ms)`);
+    } else {
+      const reasons = [
+        ...(item.missingMustContain.length ? [`missing: ${item.missingMustContain.join(", ")}`] : []),
+        ...(item.matchedMustNotContain.length ? [`forbidden: ${item.matchedMustNotContain.join(", ")}`] : []),
+        ...(item.judgeResult && !item.judgeResult.passed ? [`judge: ${item.judgeResult.reason}`] : [])
+      ];
+      out.error(`   ✖ ${label}${liftNote}: ${reasons.join("; ") || "failed"}`);
+    }
+  }
+
+  const pct = result.passRate !== null ? ` (${Math.round(result.passRate * 100)}%)` : "";
+  if (result.failed === 0) {
+    out.success(`Passed ${result.passed}/${result.total} eval case(s)${pct} using ${result.provider}:${result.model}.`);
+  } else {
+    out.warn(`${result.failed} of ${result.total} eval case(s) failed${pct} using ${result.provider}:${result.model}.`);
+  }
+  if (result.ablationSummary) {
+    const sign =
+      result.ablationSummary.netLift > 0
+        ? `+${result.ablationSummary.netLift}`
+        : String(result.ablationSummary.netLift);
+    out.info(
+      `Ablation: with-skill ${result.ablationSummary.withSkillPassed}/${result.total} vs baseline ${result.ablationSummary.baselinePassed}/${result.total} (net lift ${sign}).`
+    );
+  }
+  return options.strict && result.failed > 0 ? 1 : 0;
 }

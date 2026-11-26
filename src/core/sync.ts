@@ -1,5 +1,6 @@
 /**
- * `skanvil sync`: installation of a library's skills into the skill folders that agents read.
+ * `skanvil sync`: installation of a library's skills into the skill folders that agents read,
+ * plus `skanvil outdated` drift inspection and reproducible Git commit pinning (`--frozen`).
  *
  * @module
  */
@@ -14,7 +15,7 @@ import { exists, hashDirectory, listFiles } from "../util/fs.js";
 import { packageVersion } from "../util/paths.js";
 import { SKILL_STATUSES } from "./config.js";
 import { EVALS_FILE } from "./evals.js";
-import type { Library } from "./library.js";
+import { Library } from "./library.js";
 import { PARAMS_FILE, renderTemplate, resolveParamValues, type ParamDefinitions } from "./params.js";
 import { SkillFile } from "./skill.js";
 import { estimateTokens } from "./text.js";
@@ -22,6 +23,7 @@ import { validateLibrary } from "./validate.js";
 
 const execFileAsync = promisify(execFile);
 const EXCLUDED_SYNC_FILES = new Set([PARAMS_FILE, EVALS_FILE]);
+const GIT_SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
 
 /**
  * Project-level skill folders read by each agent, relative to the project root.
@@ -48,14 +50,6 @@ export const TARGET_PRESETS: Record<string, string> = {
 /**
  * User-level skill folders read by each agent, relative to the home directory. Skills here are
  * available in every project of the user (`--global`).
- *
- * - `claude`: Claude Code (`~/.claude/skills`).
- * - `copilot`: GitHub Copilot (`~/.copilot/skills`).
- * - `agents` / `codex`: OpenAI Codex, also read by Copilot (`~/.agents/skills`).
- * - `cursor`: Cursor (`~/.cursor/skills`).
- * - `opencode`: OpenCode (`~/.config/opencode/skills`).
- * - `windsurf`: Windsurf (`~/.codeium/windsurf/skills`).
- * - `gemini`: Gemini CLI (`~/.gemini/skills`).
  */
 export const USER_TARGET_PRESETS: Record<string, string> = {
   claude: ".claude/skills",
@@ -94,6 +88,10 @@ export interface InstalledSkillEntry {
 export interface ManifestSourceEntry {
   /** Library source identifier (relative posix path or canonical Git specifier). */
   source: string;
+  /** Resolved Git commit SHA when installed from a Git repository. */
+  commitSha?: string;
+  /** Requested Git branch or tag ref when installed with `#ref`. */
+  ref?: string;
   /** Installed skills owned by this library source, keyed by skill folder name. */
   skills: Record<string, InstalledSkillEntry>;
   /** Parameter values used for this source, reused when omitted on re-sync. */
@@ -121,12 +119,22 @@ export interface ParsedGitSource {
   canonical: string;
 }
 
+/** Options of {@link resolveSourceHandle}. */
+export interface ResolveSourceHandleOptions {
+  /** Exact commit SHA to check out when resolving a Git source reproducibly (e.g. `--frozen`). */
+  pinnedSha?: string;
+}
+
 /** Resolved `--from` source with temporary clone cleanup lifecycle. */
 export interface ResolvedSourceHandle {
   /** Absolute library root path on disk. */
   root: string;
   /** Canonical identifier to record in the sync manifest (for example `github:org/repo`). */
   sourceLabel?: string;
+  /** Exact Git commit SHA at `HEAD` when the source is a Git repository. */
+  commitSha?: string;
+  /** Requested branch or tag ref when supplied on a Git `--from` specifier. */
+  gitRef?: string;
   /** Whether `root` points to a temporary clone cleaned up after syncing. */
   isTemporary: boolean;
   /** Removes any temporary clone directory (`no-op` for persistent sources). */
@@ -143,6 +151,8 @@ export interface SyncOptions {
   mode?: "copy" | "link";
   /** Report what would change without writing anything. @defaultValue `false` */
   dryRun?: boolean;
+  /** Fail without writing if any synced skill would be added, updated, or removed, or lacks a manifest entry. */
+  frozen?: boolean;
   /** Sync skills even when they have validation errors. @defaultValue `false` */
   force?: boolean;
   /** Only sync these categories (ids or aliases). Disables pruning. */
@@ -162,6 +172,10 @@ export interface SyncOptions {
    * ephemeral clone directories are never stored in the manifest).
    */
   sourceLabel?: string;
+  /** Resolved Git commit SHA stored on {@link ManifestSourceEntry.commitSha}. */
+  commitSha?: string;
+  /** Requested Git branch or tag ref stored on {@link ManifestSourceEntry.ref}. */
+  gitRef?: string;
   /**
    * When set and `mode` is `"link"`, falls back to `"copy"` and emits this message as a warning.
    */
@@ -198,13 +212,47 @@ export interface TargetResult {
   alwaysLoadedTokens: number;
 }
 
+/** Options of {@link checkOutdatedSkills}. */
+export interface OutdatedOptions {
+  /** Preset names or relative target paths. When omitted, scans every preset containing `.skanvil-sync.json`. */
+  targets?: string[];
+  /** Project or user scope. @defaultValue `"project"` */
+  scope?: TargetScope;
+  /** Home directory override for `"user"` scope. @defaultValue `os.homedir()` */
+  homeDir?: string;
+  /** Only check one matching manifest source key or substring. */
+  sourceFilter?: string;
+}
+
+/** Drift status for a single `(target, source)` entry inside {@link OutdatedReport}. */
+export interface OutdatedSourceEntry {
+  target: string;
+  targetPath: string;
+  source: string;
+  status: "up-to-date" | "outdated" | "error";
+  installedCommitSha?: string;
+  latestCommitSha?: string;
+  added: string[];
+  updated: string[];
+  removed: string[];
+  unchangedCount: number;
+  installedAlwaysLoadedTokens: number;
+  latestAlwaysLoadedTokens: number;
+  stage1TokenDelta: number;
+  error?: string;
+}
+
+/** Aggregated result returned by {@link checkOutdatedSkills}. */
+export interface OutdatedReport {
+  dest: string;
+  scope: TargetScope;
+  entries: OutdatedSourceEntry[];
+  outdatedCount: number;
+  errorCount: number;
+}
+
 /**
  * Resolves a sync target to an absolute folder.
- *
- * - **Project scope:** presets resolve against `dest` ({@link TARGET_PRESETS}). Custom paths must
- *   stay inside `dest`, so a typo such as `../..` can never write or prune outside the project.
- * - **User scope:** only presets are accepted, and they resolve against the home folder
- *   ({@link USER_TARGET_PRESETS}).
  *
  * @param dest - Project root (ignored for the user scope).
  * @param target - Preset name, or a path relative to `dest`.
@@ -252,7 +300,6 @@ async function readManifest(dir: string): Promise<ManifestV2 | null> {
       return parsed as unknown as ManifestV2;
     }
 
-    // Migrate legacy v1 single-source manifests seamlessly in memory.
     if (parsed.skills && typeof parsed.skills === "object" && !Array.isArray(parsed.skills)) {
       const key = typeof parsed.source === "string" && parsed.source ? parsed.source : ".";
       return {
@@ -275,6 +322,43 @@ async function readManifest(dir: string): Promise<ManifestV2 | null> {
   } catch {
     return null;
   }
+}
+
+async function readGitHeadSha(root: string): Promise<string | undefined> {
+  try {
+    const { stdout } = await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: root });
+    const sha = stdout.trim();
+    return GIT_SHA_PATTERN.test(sha) ? sha : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Looks up a previously pinned Git commit SHA in target `.skanvil-sync.json` manifests for
+ * reproducible `--frozen` syncs.
+ *
+ * @param dest - Project root.
+ * @param targets - Target presets or relative paths.
+ * @param sourceLabel - Canonical Git source key (`github:owner/repo[#ref]`, etc.).
+ * @param scope - Project or user scope.
+ * @param homeDir - Optional home directory override for `"user"` scope.
+ * @returns Recorded commit SHA when present.
+ */
+export async function readManifestPinnedSha(
+  dest: string,
+  targets: readonly string[],
+  sourceLabel: string,
+  scope: TargetScope = "project",
+  homeDir?: string
+): Promise<string | undefined> {
+  for (const target of targets) {
+    const dir = resolveTarget(dest, target, { scope, homeDir });
+    const manifest = await readManifest(dir);
+    const sha = manifest?.sources[sourceLabel]?.commitSha;
+    if (sha && GIT_SHA_PATTERN.test(sha)) return sha;
+  }
+  return undefined;
 }
 
 /**
@@ -345,36 +429,56 @@ export async function resolveSource(from: string, dest: string): Promise<string>
 
 /**
  * Resolves a `--from` source (local folder, installed npm package, or remote/file Git URL)
- * into a {@link ResolvedSourceHandle} with lifecycle cleanup for shallow Git clones.
+ * into a {@link ResolvedSourceHandle} with lifecycle cleanup and commit SHA resolution.
  *
  * @param from - Local folder path, npm package name, or Git URL (`github:org/repo[#ref]`, `git+https://...`).
  * @param dest - Project root used to resolve relative paths and `node_modules`.
- * @returns Source handle holding `root`, optional `sourceLabel`, and `cleanup()`.
- * @throws Error when cloning fails, the Git ref is invalid, or no local/npm source matches.
+ * @param options - Optional `pinnedSha` for reproducible commit checkout.
+ * @returns Source handle holding `root`, optional `sourceLabel`, `commitSha`, `gitRef`, and `cleanup()`.
+ * @throws Error when cloning fails, the Git ref/SHA is invalid, or no local/npm source matches.
  */
-export async function resolveSourceHandle(from: string, dest: string): Promise<ResolvedSourceHandle> {
+export async function resolveSourceHandle(
+  from: string,
+  dest: string,
+  options: ResolveSourceHandleOptions = {}
+): Promise<ResolvedSourceHandle> {
   const git = parseGitSource(from);
   if (!git) {
+    const root = await resolveSource(from, dest);
+    const commitSha = await readGitHeadSha(root);
     return {
-      root: await resolveSource(from, dest),
+      root,
+      ...(commitSha ? { commitSha } : {}),
       isTemporary: false,
       cleanup: async () => {}
     };
   }
 
+  if (options.pinnedSha && !GIT_SHA_PATTERN.test(options.pinnedSha)) {
+    throw new Error(`Invalid pinned Git commit SHA '${options.pinnedSha}'.`);
+  }
+
   const tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), "skanvil-git-"));
-  const args = ["clone", "--depth", "1", ...(git.ref ? ["--branch", git.ref] : []), "--", git.url, tmpDir];
   try {
-    await execFileAsync("git", args);
+    if (options.pinnedSha) {
+      await execFileAsync("git", ["clone", "--no-checkout", "--", git.url, tmpDir]);
+      await execFileAsync("git", ["checkout", "--detach", options.pinnedSha], { cwd: tmpDir });
+    } else {
+      const args = ["clone", "--depth", "1", ...(git.ref ? ["--branch", git.ref] : []), "--", git.url, tmpDir];
+      await execFileAsync("git", args);
+    }
   } catch (error) {
     await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
     const detail = (error as Error & { stderr?: string }).stderr?.trim() || (error as Error).message;
     throw new Error(`Failed to clone Git source '${from}': ${detail}`);
   }
 
+  const commitSha = await readGitHeadSha(tmpDir);
   return {
     root: tmpDir,
     sourceLabel: git.canonical,
+    ...(commitSha ? { commitSha } : {}),
+    ...(git.ref ? { gitRef: git.ref } : {}),
     isTemporary: true,
     cleanup: async () => {
       await fs.rm(tmpDir, { recursive: true, force: true }).catch(() => undefined);
@@ -384,8 +488,6 @@ export async function resolveSourceHandle(from: string, dest: string): Promise<R
 
 /**
  * Replaces `target` with a copy of `source`, or a link to it.
- *
- * @returns The mode actually used: a failed link falls back to a copy and adds a warning.
  */
 async function place(
   source: string,
@@ -399,7 +501,6 @@ async function place(
     warnings.push(`${path.basename(target)} has parameters, so it was copied rendered instead of linked`);
   } else if (mode === "link") {
     try {
-      // Junctions need no admin rights / Developer Mode on Windows.
       await fs.symlink(source, target, process.platform === "win32" ? "junction" : "dir");
       return "link";
     } catch (error) {
@@ -415,7 +516,6 @@ async function place(
   return "copy";
 }
 
-/** What would be installed for one skill: its content hash, rendered SKILL.md, and Stage-1 token count. */
 interface Materialized {
   hash: string;
   rendered: string | null;
@@ -429,10 +529,6 @@ function stage1TokensFromContent(name: string, content: string): number {
   return estimateTokens(description ? `${effectiveName}\n${description}` : effectiveName);
 }
 
-/**
- * Computes the installed form of a skill. Parametrized skills get their `SKILL.md` rendered and
- * lose `params.json`; other skills are hashed exactly like before parameters existed.
- */
 async function materialize(
   library: Library,
   name: string,
@@ -491,23 +587,13 @@ async function readStage1TokensFromTargetOrLibrary(
  * - a target folder that already exists without manifest ownership, or belongs to another synced
  *   library in {@link MANIFEST_FILE}, is skipped and never overwritten.
  *
- * @remarks Idempotent and multi-library safe. Each target holds a {@link MANIFEST_FILE} (Manifest v2,
- * reading and upgrading v1 manifests automatically) tracking skills and parameter values per library source.
- * Re-running:
- * - leaves unchanged skills alone and replaces changed ones;
- * - removes skills deleted from **this** library without touching skills managed by other libraries;
- * - keeps the last good copy of a skill that is temporarily failing validation.
+ * When `frozen: true`, the full plan is checked against `.skanvil-sync.json` first and throws without
+ * modifying any files if any target would add, update, or remove skills (or lacks a manifest entry).
  *
  * @param library - Source library.
- * @param options - Destination, targets and filters.
+ * @param options - Destination, targets, filters, and optional `frozen` / `commitSha` lock options.
  * @returns One result per target, in the order given.
- * @throws Error when a category filter is unknown or the library README cannot be read.
- *
- * @example
- * ```ts
- * const [claude] = await syncSkills(lib, { dest: "../app", targets: ["claude"], dryRun: true });
- * console.log(claude.added, claude.updated, claude.removed);
- * ```
+ * @throws Error when a category filter is unknown, the library README cannot be read, or `frozen` detects drift.
  */
 export async function syncSkills(library: Library, options: SyncOptions): Promise<TargetResult[]> {
   const requestedMode = options.mode ?? library.config.sync.mode;
@@ -541,7 +627,7 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
   const candidates: string[] = [];
   for (const folder of await library.listSkillFolders()) {
     const category = library.categories.fromFolder(folder);
-    if (!category.validated) continue; // e.g. _internal skills: not spec-compliant names
+    if (!category.validated) continue;
     if (categoryFilter && !categoryFilter.includes(category.id)) continue;
     if (options.skills?.length && !options.skills.includes(folder)) continue;
     if (!(await library.hasSkill(folder))) continue;
@@ -594,14 +680,15 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
     }
   }
 
-  // Resolve every target, its parameter values and the content to install before writing anything,
-  // so an invalid target or value fails without partial writes.
+  // Compute full diff plans across all targets before writing anything to disk.
   const cache = new Map<string, Materialized>();
-  const plans = [];
+  const planned = [];
+
   for (const target of options.targets) {
     const dir = resolveTarget(options.dest, target, { scope: options.scope, homeDir: options.homeDir });
     const sourceKey = options.sourceLabel ?? (path.relative(dir, library.root).split(path.sep).join("/") || ".");
     const manifest = (await readManifest(dir)) ?? emptyManifest();
+    const hasOwnEntry = Object.prototype.hasOwnProperty.call(manifest.sources, sourceKey);
     const ownPrev = manifest.sources[sourceKey] ?? { source: sourceKey, skills: {} };
     const remembered = Object.fromEntries(Object.entries(ownPrev.params ?? {}).filter(([key]) => declared.has(key)));
     const values = options.params ?? remembered;
@@ -611,11 +698,15 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
       if (!cache.has(key)) cache.set(key, await materialize(library, name, definitions.get(name) ?? null, values));
       items.set(name, cache.get(key)!);
     }
-    plans.push({ target, dir, sourceKey, manifest, ownPrev, values, items });
-  }
 
-  const results: TargetResult[] = [];
-  for (const { target, dir, sourceKey, manifest, ownPrev, values, items } of plans) {
+    const foreignOwners = new Map<string, string>();
+    for (const [otherKey, otherEntry] of Object.entries(manifest.sources)) {
+      if (otherKey === sourceKey) continue;
+      for (const skillName of Object.keys(otherEntry.skills)) {
+        foreignOwners.set(skillName, otherKey);
+      }
+    }
+
     const result: TargetResult = {
       target,
       path: dir,
@@ -629,22 +720,13 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
       alwaysLoadedTokens: 0
     };
 
-    const foreignOwners = new Map<string, string>();
-    for (const [otherKey, otherEntry] of Object.entries(manifest.sources)) {
-      if (otherKey === sourceKey) continue;
-      for (const skillName of Object.keys(otherEntry.skills)) {
-        foreignOwners.set(skillName, otherKey);
-      }
-    }
-
-    const nextOwnSkills: Record<string, InstalledSkillEntry> = filtered ? { ...ownPrev.skills } : {};
-
-    if (!options.dryRun) await fs.mkdir(dir, { recursive: true });
-
+    const actions: Array<{ name: string; kind: "write" | "keep" | "skip"; hash?: string; rendered?: string | null }> =
+      [];
     for (const name of candidates) {
       const foreignOwner = foreignOwners.get(name);
       if (foreignOwner) {
         result.skipped.push({ skill: name, reason: `already managed by another library ('${foreignOwner}')` });
+        actions.push({ name, kind: "skip" });
         continue;
       }
 
@@ -655,36 +737,83 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
 
       if (present && !previous) {
         result.skipped.push({ skill: name, reason: `${destination} exists and is not managed by skanvil` });
+        actions.push({ name, kind: "skip" });
         continue;
       }
       if (present && previous && previous.hash === hash && previous.mode === mode) {
         result.unchanged.push(name);
-        nextOwnSkills[name] = previous;
+        actions.push({ name, kind: "keep" });
         continue;
       }
       (present ? result.updated : result.added).push(name);
-      const actualMode = options.dryRun
-        ? mode
-        : await place(library.skillPath(name), destination, mode, result.warnings, rendered);
-      nextOwnSkills[name] = { hash, mode: actualMode };
+      actions.push({ name, kind: "write", hash, rendered });
+    }
+
+    const removals: string[] = [];
+    if (!filtered) {
+      for (const name of Object.keys(ownPrev.skills)) {
+        if (candidates.includes(name)) continue;
+        if (failingSkipped.has(name)) continue;
+        result.removed.push(name);
+        removals.push(name);
+      }
+    }
+
+    if (options.frozen) {
+      if (!hasOwnEntry) {
+        throw new Error(
+          `Frozen sync failed: target '${target}' has no manifest entry for source '${sourceKey}' in ${MANIFEST_FILE}.`
+        );
+      }
+      if (result.added.length > 0 || result.updated.length > 0 || result.removed.length > 0) {
+        throw new Error(
+          `Frozen sync failed for '${target}': pending changes (+${result.added.length} added, ~${result.updated.length} updated, -${result.removed.length} removed). Remove --frozen to apply updates.`
+        );
+      }
+    }
+
+    planned.push({ target, dir, sourceKey, manifest, ownPrev, values, items, result, actions, removals });
+  }
+
+  const results: TargetResult[] = [];
+  for (const plan of planned) {
+    const { dir, sourceKey, manifest, ownPrev, values, items, result, actions, removals } = plan;
+    const nextOwnSkills: Record<string, InstalledSkillEntry> = filtered ? { ...ownPrev.skills } : {};
+
+    if (!options.dryRun) await fs.mkdir(dir, { recursive: true });
+
+    for (const action of actions) {
+      if (action.kind === "keep") {
+        nextOwnSkills[action.name] = ownPrev.skills[action.name];
+      } else if (action.kind === "write") {
+        const destination = path.join(dir, action.name);
+        const actualMode = options.dryRun
+          ? mode
+          : await place(library.skillPath(action.name), destination, mode, result.warnings, action.rendered ?? null);
+        nextOwnSkills[action.name] = { hash: action.hash!, mode: actualMode };
+      }
     }
 
     if (!filtered) {
       for (const name of Object.keys(ownPrev.skills)) {
         if (candidates.includes(name)) continue;
         if (failingSkipped.has(name)) {
-          nextOwnSkills[name] = ownPrev.skills[name]; // keep the last good copy of a temporarily failing skill
-          continue;
+          nextOwnSkills[name] = ownPrev.skills[name];
         }
-        result.removed.push(name);
+      }
+      for (const name of removals) {
         if (!options.dryRun) await fs.rm(path.join(dir, name), { recursive: true, force: true });
       }
     }
 
     const nextSources: Record<string, ManifestSourceEntry> = { ...manifest.sources };
     if (Object.keys(nextOwnSkills).length > 0) {
+      const effectiveSha = options.commitSha ?? ownPrev.commitSha;
+      const effectiveRef = options.gitRef ?? ownPrev.ref;
       nextSources[sourceKey] = {
         source: sourceKey,
+        ...(effectiveSha ? { commitSha: effectiveSha } : {}),
+        ...(effectiveRef ? { ref: effectiveRef } : {}),
         skills: nextOwnSkills,
         ...(declared.size && Object.keys(values).length ? { params: values } : {})
       };
@@ -716,4 +845,121 @@ export async function syncSkills(library: Library, options: SyncOptions): Promis
     results.push(result);
   }
   return results;
+}
+
+/**
+ * Inspects installed `.skanvil-sync.json` manifests across one or more target directories and
+ * compares installed skill hashes and pinned Git commit SHAs against their upstream sources.
+ *
+ * @param dest - Project root (ignored for `"user"` scope).
+ * @param options - Optional target filter, scope, home folder, and source filter.
+ * @returns Drift report per `(target, source)` entry.
+ */
+export async function checkOutdatedSkills(dest: string, options: OutdatedOptions = {}): Promise<OutdatedReport> {
+  const scope: TargetScope = options.scope ?? "project";
+  const presets = scope === "user" ? USER_TARGET_PRESETS : TARGET_PRESETS;
+  const candidateTargets = options.targets?.length ? options.targets : Object.keys(presets);
+  const seenDirs = new Set<string>();
+  const entries: OutdatedSourceEntry[] = [];
+
+  for (const target of candidateTargets) {
+    const targetDir = resolveTarget(dest, target, { scope, homeDir: options.homeDir });
+    if (seenDirs.has(targetDir)) continue;
+    seenDirs.add(targetDir);
+
+    const manifest = await readManifest(targetDir);
+    if (!manifest) continue;
+
+    let installedAlwaysLoadedTokens = 0;
+    for (const srcEntry of Object.values(manifest.sources)) {
+      for (const skillName of Object.keys(srcEntry.skills)) {
+        installedAlwaysLoadedTokens += await readStage1TokensFromTargetOrLibrary(null, targetDir, skillName);
+      }
+    }
+
+    for (const [sourceKey, entry] of Object.entries(manifest.sources)) {
+      if (options.sourceFilter && !sourceKey.includes(options.sourceFilter)) continue;
+
+      let handle: ResolvedSourceHandle | null = null;
+      try {
+        const isGit = Boolean(parseGitSource(sourceKey));
+        if (isGit) {
+          handle = await resolveSourceHandle(sourceKey, dest);
+        } else {
+          const relativeToTarget = path.resolve(targetDir, sourceKey);
+          if (await exists(path.join(relativeToTarget, "skills"))) {
+            const sha = await readGitHeadSha(relativeToTarget);
+            handle = {
+              root: relativeToTarget,
+              ...(sha ? { commitSha: sha } : {}),
+              isTemporary: false,
+              cleanup: async () => {}
+            };
+          } else {
+            handle = await resolveSourceHandle(sourceKey, dest);
+          }
+        }
+
+        const lib = await Library.open(handle.root);
+        const [dryResult] = await syncSkills(lib, {
+          dest,
+          targets: [target],
+          scope,
+          homeDir: options.homeDir,
+          dryRun: true,
+          sourceLabel: sourceKey,
+          forbidLinkReason: handle.isTemporary ? "temporary Git source" : undefined,
+          params: entry.params
+        });
+
+        const hasChanges =
+          dryResult.added.length > 0 ||
+          dryResult.updated.length > 0 ||
+          dryResult.removed.length > 0 ||
+          Boolean(entry.commitSha && handle.commitSha && entry.commitSha !== handle.commitSha);
+
+        entries.push({
+          target,
+          targetPath: targetDir,
+          source: sourceKey,
+          status: hasChanges ? "outdated" : "up-to-date",
+          ...(entry.commitSha ? { installedCommitSha: entry.commitSha } : {}),
+          ...(handle.commitSha ? { latestCommitSha: handle.commitSha } : {}),
+          added: dryResult.added,
+          updated: dryResult.updated,
+          removed: dryResult.removed,
+          unchangedCount: dryResult.unchanged.length,
+          installedAlwaysLoadedTokens,
+          latestAlwaysLoadedTokens: dryResult.alwaysLoadedTokens,
+          stage1TokenDelta: dryResult.alwaysLoadedTokens - installedAlwaysLoadedTokens
+        });
+      } catch (error) {
+        entries.push({
+          target,
+          targetPath: targetDir,
+          source: sourceKey,
+          status: "error",
+          ...(entry.commitSha ? { installedCommitSha: entry.commitSha } : {}),
+          added: [],
+          updated: [],
+          removed: [],
+          unchangedCount: 0,
+          installedAlwaysLoadedTokens,
+          latestAlwaysLoadedTokens: installedAlwaysLoadedTokens,
+          stage1TokenDelta: 0,
+          error: (error as Error).message
+        });
+      } finally {
+        if (handle) await handle.cleanup();
+      }
+    }
+  }
+
+  return {
+    dest: path.resolve(dest),
+    scope,
+    entries,
+    outdatedCount: entries.filter((item) => item.status === "outdated").length,
+    errorCount: entries.filter((item) => item.status === "error").length
+  };
 }

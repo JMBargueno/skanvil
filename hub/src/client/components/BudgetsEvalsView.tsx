@@ -5,7 +5,13 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
   if (points.length === 0) {
     return (
       <div className="card empty-state">
-        <h3 style={{ margin: 0 }}>No library snapshots recorded yet</h3>
+        <div className="empty-icon-ring" aria-hidden="true">
+          <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+            <path d="M3 17l6-6 4 4 8-8" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M17 7h4v4" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        <h3 style={{ margin: 0, fontSize: 18 }}>No library snapshots recorded yet</h3>
         <p className="muted" style={{ margin: 0, maxWidth: 480 }}>
           Run <span className="code-chip">npx skanvil telemetry snapshot</span> locally or from CI to track Stage-1,
           Stage-2, Stage-3 token budgets and eval trigger pass rates over time.
@@ -15,13 +21,14 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
   }
 
   const width = 720;
-  const height = 210;
+  const height = 216;
   const padLeft = 48;
   const padRight = 18;
   const padTop = 16;
   const padBottom = 28;
   const plotWidth = width - padLeft - padRight;
   const plotHeight = height - padTop - padBottom;
+  const baseY = padTop + plotHeight;
 
   const maxTokens = points.reduce(
     (acc, item) => Math.max(acc, item.alwaysLoadedTokens, item.bodyTokens, item.resourceTokens),
@@ -37,6 +44,13 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
       .map((item, idx) => `${idx === 0 ? "M" : "L"}${coordX(idx).toFixed(1)},${coordY(getter(item)).toFixed(1)}`)
       .join(" ");
 
+  const buildAreaPath = (getter: (item: (typeof points)[number]) => number) => {
+    const line = buildPath(getter);
+    const lastX = coordX(points.length - 1).toFixed(1);
+    const firstX = coordX(0).toFixed(1);
+    return `${line} L${lastX},${baseY.toFixed(1)} L${firstX},${baseY.toFixed(1)} Z`;
+  };
+
   return (
     <div className="stack-col">
       <div className="card">
@@ -44,13 +58,14 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
           <h3 className="card-title">3-Stage Token Budget History</h3>
           <div className="legend">
             <span className="legend-item">
-              <span className="dot" style={{ background: "var(--accent)" }} /> Stage 1 (Always-Loaded)
+              <span className="dot" style={{ background: "var(--accent)", color: "var(--accent)" }} /> Stage 1
+              (Always-Loaded)
             </span>
             <span className="legend-item">
-              <span className="dot" style={{ background: "var(--success)" }} /> Stage 2 (Body)
+              <span className="dot" style={{ background: "var(--success)", color: "var(--success)" }} /> Stage 2 (Body)
             </span>
             <span className="legend-item">
-              <span className="dot" style={{ background: "var(--warn)" }} /> Stage 3 (Resources)
+              <span className="dot" style={{ background: "var(--warn)", color: "var(--warn)" }} /> Stage 3 (Resources)
             </span>
           </div>
         </div>
@@ -62,12 +77,34 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
             role="img"
             aria-label="3-stage token budget trend chart"
           >
+            <defs>
+              <linearGradient id="stage1Area" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--accent)" stopOpacity="0.28" />
+                <stop offset="100%" stopColor="var(--accent)" stopOpacity="0" />
+              </linearGradient>
+              <linearGradient id="stage2Area" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--success)" stopOpacity="0.2" />
+                <stop offset="100%" stopColor="var(--success)" stopOpacity="0" />
+              </linearGradient>
+              <linearGradient id="stage3Area" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="0%" stopColor="var(--warn)" stopOpacity="0.16" />
+                <stop offset="100%" stopColor="var(--warn)" stopOpacity="0" />
+              </linearGradient>
+            </defs>
+
             {[0, 0.5, 1].map((ratio) => {
               const y = padTop + plotHeight * (1 - ratio);
               return (
                 <g key={ratio}>
-                  <line x1={padLeft} y1={y} x2={width - padRight} y2={y} stroke="#263248" strokeDasharray="3 3" />
-                  <text x={padLeft - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#94a3b8">
+                  <line
+                    x1={padLeft}
+                    y1={y}
+                    x2={width - padRight}
+                    y2={y}
+                    stroke="var(--chart-grid)"
+                    strokeDasharray="3 4"
+                  />
+                  <text x={padLeft - 7} y={y + 4} textAnchor="end" fontSize="10" fill="var(--chart-axis)">
                     {Math.round(maxTokens * ratio)}
                   </text>
                 </g>
@@ -76,9 +113,33 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
 
             {points.length > 1 && (
               <>
-                <path d={buildPath((p) => p.bodyTokens)} fill="none" stroke="var(--success)" strokeWidth="2.2" />
-                <path d={buildPath((p) => p.resourceTokens)} fill="none" stroke="var(--warn)" strokeWidth="2" />
-                <path d={buildPath((p) => p.alwaysLoadedTokens)} fill="none" stroke="var(--accent)" strokeWidth="2.6" />
+                <path d={buildAreaPath((p) => p.bodyTokens)} fill="url(#stage2Area)" />
+                <path d={buildAreaPath((p) => p.resourceTokens)} fill="url(#stage3Area)" />
+                <path d={buildAreaPath((p) => p.alwaysLoadedTokens)} fill="url(#stage1Area)" />
+                <path
+                  d={buildPath((p) => p.bodyTokens)}
+                  fill="none"
+                  stroke="var(--success)"
+                  strokeWidth="2.2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d={buildPath((p) => p.resourceTokens)}
+                  fill="none"
+                  stroke="var(--warn)"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+                <path
+                  d={buildPath((p) => p.alwaysLoadedTokens)}
+                  fill="none"
+                  stroke="var(--accent)"
+                  strokeWidth="2.6"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </>
             )}
 
@@ -87,19 +148,40 @@ export function BudgetsEvalsView({ data }: { data: BudgetsResponse }) {
               const showLabel = idx === 0 || idx === points.length - 1;
               return (
                 <g key={point.eventId}>
-                  <circle cx={x} cy={coordY(point.alwaysLoadedTokens)} r="4" fill="var(--accent)">
+                  <circle
+                    cx={x}
+                    cy={coordY(point.alwaysLoadedTokens)}
+                    r="4.5"
+                    fill="var(--accent)"
+                    stroke="var(--chart-dot-ring)"
+                    strokeWidth="2"
+                  >
                     <title>
                       {`${point.timestamp.slice(0, 16)} (${point.library}): Stage 1 = ${point.alwaysLoadedTokens}`}
                     </title>
                   </circle>
-                  <circle cx={x} cy={coordY(point.bodyTokens)} r="3.5" fill="var(--success)">
+                  <circle
+                    cx={x}
+                    cy={coordY(point.bodyTokens)}
+                    r="4"
+                    fill="var(--success)"
+                    stroke="var(--chart-dot-ring)"
+                    strokeWidth="1.8"
+                  >
                     <title>{`Stage 2 = ${point.bodyTokens}`}</title>
                   </circle>
-                  <circle cx={x} cy={coordY(point.resourceTokens)} r="3.5" fill="var(--warn)">
+                  <circle
+                    cx={x}
+                    cy={coordY(point.resourceTokens)}
+                    r="4"
+                    fill="var(--warn)"
+                    stroke="var(--chart-dot-ring)"
+                    strokeWidth="1.8"
+                  >
                     <title>{`Stage 3 = ${point.resourceTokens}`}</title>
                   </circle>
                   {showLabel && (
-                    <text x={x} y={height - 8} textAnchor="middle" fontSize="10" fill="#94a3b8">
+                    <text x={x} y={height - 8} textAnchor="middle" fontSize="10" fill="var(--chart-axis)">
                       {point.timestamp.slice(5, 10)}
                     </text>
                   )}

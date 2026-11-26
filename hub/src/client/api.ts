@@ -3,8 +3,11 @@ import type {
   AuthStatusResponse,
   BudgetsResponse,
   FeedbackResponse,
+  FeedbackStatus,
+  FeedbackTriageRequest,
   LibrariesResponse,
   OverviewResponse,
+  SkillDetailResponse,
   SkillsAnalyticsResponse
 } from "../shared/schema.js";
 
@@ -41,12 +44,21 @@ async function requestJson<T>(url: string, init?: RequestInit): Promise<T> {
   return (await response.json()) as T;
 }
 
-function buildQuery(library: string, days?: number): string {
+function buildQuery(library: string, days?: number, extra?: Record<string, string | undefined>): string {
   const params = new URLSearchParams();
   if (library && library !== "all") params.set("library", library);
   if (days !== undefined) params.set("days", String(days));
+  if (extra) {
+    for (const [k, v] of Object.entries(extra)) {
+      if (v) params.set(k, v);
+    }
+  }
   const qs = params.toString();
   return qs ? `?${qs}` : "";
+}
+
+export function exportDownloadUrl(format: "csv" | "json", library: string, days: number): string {
+  return `/api/dashboard/export${buildQuery(library, days, { format })}`;
 }
 
 export function fetchAuthStatus(): Promise<AuthStatusResponse> {
@@ -78,12 +90,30 @@ export function fetchSkillsAnalytics(library: string, days: number): Promise<Ski
   return requestJson<SkillsAnalyticsResponse>(`/api/dashboard/skills${buildQuery(library, days)}`);
 }
 
+export function fetchSkillDetail(library: string, skill: string, days: number): Promise<SkillDetailResponse> {
+  const qs = new URLSearchParams({ library, skill, days: String(days) }).toString();
+  return requestJson<SkillDetailResponse>(`/api/dashboard/skill-detail?${qs}`);
+}
+
 export function fetchBudgetsHistory(library: string, days: number): Promise<BudgetsResponse> {
   return requestJson<BudgetsResponse>(`/api/dashboard/budgets${buildQuery(library, days)}`);
 }
 
-export function fetchFeedbackSummary(library: string, days: number): Promise<FeedbackResponse> {
-  return requestJson<FeedbackResponse>(`/api/dashboard/feedback${buildQuery(library, days)}`);
+export function fetchFeedbackSummary(
+  library: string,
+  days: number,
+  status: "all" | FeedbackStatus = "all"
+): Promise<FeedbackResponse> {
+  return requestJson<FeedbackResponse>(
+    `/api/dashboard/feedback${buildQuery(library, days, { status: status === "all" ? undefined : status })}`
+  );
+}
+
+export function updateFeedbackTriage(payload: FeedbackTriageRequest): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>("/api/dashboard/feedback/triage", {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
 }
 
 export function fetchSyncAdoption(library: string): Promise<AdoptionResponse> {

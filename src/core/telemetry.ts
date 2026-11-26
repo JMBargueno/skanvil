@@ -812,3 +812,110 @@ export async function flushTelemetryQueue(
     events: validEvents
   };
 }
+
+/** Per-skill analytics row returned by `GET /api/dashboard/skills` on `skanvil-hub`. */
+export interface HubSkillAuditRow {
+  library: string;
+  skill: string;
+  category: string | null;
+  owner: string | null;
+  status: string | null;
+  replacedBy: string | null;
+  stage1Tokens: number | null;
+  invocations: number;
+  frictionEvents: number;
+  frictionRate: number | null;
+  syncedProjects: number;
+  lastUsedAt: string | null;
+  isZombie: boolean;
+}
+
+/** Audit summary fetched from a self-hosted `skanvil-hub` instance. */
+export interface HubAuditResult {
+  endpoint: string;
+  library: string | null;
+  days: number;
+  skills: HubSkillAuditRow[];
+  zombies: HubSkillAuditRow[];
+  wastedStage1Tokens: number;
+  highFriction: HubSkillAuditRow[];
+}
+
+/**
+ * Silently attempts to flush `~/.skanvil/telemetry-queue.jsonl` in the background of another
+ * telemetry-emitting CLI command (`sync`, `telemetry snapshot`). Never throws.
+ *
+ * @param settings - Resolved telemetry settings.
+ * @returns Flush result when a queue file existed and delivery ran, otherwise `null`.
+ */
+export async function tryAutoFlushTelemetryQueue(
+  settings: ResolvedTelemetrySettings
+): Promise<TelemetryFlushResult | null> {
+  if (isTelemetryOptedOut() || !settings.endpoint) return null;
+  try {
+    await fs.access(settings.queueFile);
+  } catch {
+    return null;
+  }
+  try {
+    return await flushTelemetryQueue({
+      ...settings,
+      timeoutMs: Math.min(settings.timeoutMs, 1000)
+    });
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches live skill analytics from `GET <endpoint>/api/dashboard/skills` and flags zombie skills
+ * and high-friction skills for `skanvil telemetry audit` and `skanvil diff --from-hub`.
+ *
+ * @param settings - Resolved telemetry settings containing the hub `endpoint`.
+ * @param options - Optional library filter, lookback days (`30`), and admin token (`SKANVIL_HUB_ADMIN_TOKEN`).
+ * @returns Audit lists and wasted Stage-1 token estimates.
+ * @throws Error when no endpoint is configured or the hub returns a non-OK status.
+ */
+export async function fetchHubSkillsAudit(
+  settings: ResolvedTelemetrySettings,
+  options: { library?: string; days?: number; adminToken?: string; env?: NodeJS.ProcessEnv } = {}
+): Promise<HubAuditResult> {
+  const endpoint = assertValidEndpoint(settings.endpoint);
+  const days = Math.max(1, Math.min(365, Math.round(options.days ?? 30)));
+  const env = options.env ?? process.env;
+  const token = options.adminToken?.trim() || env.SKANVIL_HUB_ADMIN_TOKEN?.trim() || settings.apiKey;
+  const params = new URLSearchParams({ days: String(days) });
+  if (options.library?.trim()) params.set("library", options.library.trim());
+
+  const headers: Record<string, string> = {};
+  if (token) headers.authorization = `Bearer ${token}`;
+
+  const response = await fetch(`${endpoint}/api/dashboard/skills?${params.toString()}`, {
+    method: "GET",
+    headers,
+    signal: AbortSignal.timeout(settings.timeoutMs)
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`HTTP ${response.status} fetching hub audit${detail ? `: ${detail.slice(0, 200)}` : ""}`);
+  }
+
+  const payload = (await response.json()) as { library?: string | null; days?: number; skills?: HubSkillAuditRow[] };
+  const skills = Array.isArray(payload.skills) ? payload.skills : [];
+  const zombies = skills.filter((item) => item.isZombie);
+  const wastedStage1Tokens = zombies.reduce((sum, item) => sum + (item.stage1Tokens ?? 0), 0);
+  const highFriction = skills.filter(
+    (item) => item.frictionEvents >= 2 || (item.frictionRate !== null && item.frictionRate >= 0.25)
+  );
+
+  return {
+    endpoint,
+    library: payload.library ?? options.library ?? null,
+    days: payload.days ?? days,
+    skills,
+    zombies,
+    wastedStage1Tokens,
+    highFriction
+  };
+}

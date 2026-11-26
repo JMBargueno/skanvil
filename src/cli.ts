@@ -11,7 +11,7 @@
  */
 import { Command, Option } from "commander";
 
-import { evalExportCommand, evalRouteCommand, evalTriggersCommand } from "./commands/evals.js";
+import { evalExportCommand, evalRouteCommand, evalRunCommand, evalTriggersCommand } from "./commands/evals.js";
 import { feedbackListCommand, feedbackPromoteCommand, feedbackPushCommand } from "./commands/feedback.js";
 import {
   buildCommand,
@@ -21,6 +21,7 @@ import {
   indexCommand,
   initCommand,
   installSkillCommand,
+  outdatedCommand,
   statsCommand,
   syncCommand,
   validateCommand
@@ -28,13 +29,16 @@ import {
 import { isInteractive } from "./commands/shared.js";
 import { addCommand, editCommand, importCommand, listCommand } from "./commands/skills.js";
 import {
+  telemetryAuditCommand,
   telemetryEmitCommand,
   telemetryHookCommand,
+  telemetryIngestTranscriptsCommand,
   telemetryInstallHooksCommand,
   telemetryPushCommand,
   telemetrySnapshotCommand
 } from "./commands/telemetry.js";
 import { wizardCommand } from "./commands/wizard.js";
+import { EVAL_PROVIDERS } from "./core/eval-runner.js";
 import { RULES } from "./core/validate.js";
 import { TARGET_PRESETS } from "./core/sync.js";
 import { HOOK_AGENTS } from "./core/telemetry-hooks.js";
@@ -151,6 +155,7 @@ export function buildProgram(): Command {
     .option("--strict", "treat warnings as errors")
     .option("--skill <name>", "only report problems of one skill")
     .option("--format <format>", "output format: text, github, sarif or json (default: text)")
+    .option("--embeddings", "compare descriptions via embeddings endpoint (validation.embeddingsEndpoint)")
     .addOption(cwdOption())
     .addOption(jsonOption())
     .addHelpText(
@@ -215,6 +220,25 @@ export function buildProgram(): Command {
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((prompt, options) => evalRouteCommand(prompt, options)));
+  evalCmd
+    .command("run")
+    .description("run evals.json cases natively against OpenAI, Anthropic, Gemini, Ollama, or mock")
+    .option("--provider <name>", `model provider (${EVAL_PROVIDERS.join(", ")})`)
+    .option("--model <name>", "override model identifier")
+    .option("--base-url <url>", "override HTTP API base URL")
+    .option("--api-key <key>", "provider API key (defaults to standard provider env vars)")
+    .option("--skill <name>", "only evaluate one skill")
+    .option("--split <name>", "only evaluate cases tagged 'train' or 'eval'")
+    .option("--case <id>", "only run the case matching this id")
+    .option("--ablation", "compare with-skill vs without-skill baseline results")
+    .option("--judge", "use the model provider to judge expected rubric criteria")
+    .option("--strict", "exit 1 if any evaluated case fails")
+    .option("--emit-telemetry", "send case results as skill.invoked events to skanvil-hub")
+    .option("--endpoint <url>", "skanvil-hub URL when --emit-telemetry is set")
+    .option("--telemetry-key <key>", "Bearer key for skanvil-hub when --emit-telemetry is set")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => evalRunCommand(options)));
 
   const feedbackCmd = program
     .command("feedback")
@@ -299,12 +323,35 @@ export function buildProgram(): Command {
     .action(run((options) => telemetryPushCommand(options)));
   telemetryCmd
     .command("install-hooks [dest]")
-    .description("install non-blocking telemetry hooks into claude, cursor, and/or gemini settings")
+    .description("install non-blocking telemetry and session-timing hooks into coding agent settings")
     .option("--target <name>", `agent preset (${HOOK_AGENTS.join(", ")}); repeatable or comma-separated`, collect)
     .option("--global", "install into your user home config folders instead of a project")
     .option("--dry-run", "preview settings changes without writing")
     .addOption(jsonOption())
     .action(run((dest, options) => telemetryInstallHooksCommand(dest, options)));
+  telemetryCmd
+    .command("ingest-transcripts <path>")
+    .description("extract skill invocations, durations, and tool counts from JSONL session transcripts")
+    .option("--agent <name>", "agent source label (default: claude)")
+    .option("--library <name>", "fallback owning library name")
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL or config)")
+    .option("--api-key <key>", "Bearer ingestion key (default: SKANVIL_TELEMETRY_KEY)")
+    .option("--dry-run", "preview extracted events without sending")
+    .option("--no-queue", "do not buffer locally if delivery fails")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((targetPath, options) => telemetryIngestTranscriptsCommand(targetPath, options)));
+  telemetryCmd
+    .command("audit")
+    .description("audit zombie skills and high-friction skills reported by skanvil-hub")
+    .option("--days <n>", "lookback window in days (1-365, default: 30)")
+    .option("--library <name>", "filter audit to one library")
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL or config)")
+    .option("--admin-token <token>", "Bearer admin token (default: SKANVIL_HUB_ADMIN_TOKEN)")
+    .option("--strict-zombies", "exit 1 if skanvil-hub reports any zombie skills")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => telemetryAuditCommand(options)));
 
   const templates = program.command("templates").description("manage skill templates");
   templates
@@ -361,6 +408,7 @@ export function buildProgram(): Command {
     .option("--status <value>", "only skills with this metadata.status (repeatable)", collect)
     .option("--include-deprecated", "also sync skills with metadata.status: deprecated")
     .option("--force", "also sync skills with validation errors")
+    .option("--frozen", "fail without writing if installed skills differ from the source manifest")
     .option("--dry-run", "show what would change without writing")
     .option("--param <name=value>", "value for parametrized skills (repeatable); remembered per target", collect)
     .option(
@@ -370,6 +418,20 @@ export function buildProgram(): Command {
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((dest, options) => syncCommand(dest, options)));
+
+  program
+    .command("outdated [dest]")
+    .description("check installed .skanvil-sync.json targets for upstream skill updates or Git SHA drift")
+    .option(
+      "--target <name>",
+      `preset (${Object.keys(TARGET_PRESETS).join(", ")}) or path relative to dest; repeatable or comma-separated`,
+      collect
+    )
+    .option("--from <source>", "only check manifests matching this source substring")
+    .option("--global", "check user home agent folders")
+    .option("--strict", "exit 1 when any target is outdated or unreachable")
+    .addOption(jsonOption())
+    .action(run((dest, options) => outdatedCommand(dest, options)));
 
   program
     .command("import <sourceDir>")
@@ -387,6 +449,9 @@ export function buildProgram(): Command {
     .command("diff [baseRef]")
     .description("compare the library against a Git ref (Stage-1 token delta, validation and trigger regressions)")
     .option("--format <format>", "output format: text or markdown (default: text)")
+    .option("--from-hub", "append live zombie and high-friction skill insights from skanvil-hub")
+    .option("--endpoint <url>", "skanvil-hub base URL when --from-hub is set")
+    .option("--admin-token <token>", "Bearer admin token when --from-hub is set")
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((baseRef, options) => diffCommand(baseRef, options)));

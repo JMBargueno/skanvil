@@ -3,17 +3,24 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import { AlertDispatcher } from "../src/server/alerts.js";
 import { createHubApp } from "../src/server/app.js";
 import { loadHubConfig, type HubConfig } from "../src/server/config.js";
+import { buildDemoEvents } from "../src/server/seed.js";
+import { createTelemetryStore } from "../src/server/store/factory.js";
+import { PostgresTelemetryStore, type PgQueryClient } from "../src/server/store/postgres.js";
 import { SqliteTelemetryStore } from "../src/server/store/sqlite.js";
-import type {
-  AdoptionResponse,
-  BudgetsResponse,
-  FeedbackResponse,
-  LibrariesResponse,
-  OverviewResponse,
-  SkillsAnalyticsResponse,
-  TelemetryEvent
+import {
+  TelemetryBatchSchema,
+  type AdoptionResponse,
+  type BudgetsResponse,
+  type FeedbackResponse,
+  type LibrariesResponse,
+  type OverviewResponse,
+  type RetentionResult,
+  type SkillDetailResponse,
+  type SkillsAnalyticsResponse,
+  type TelemetryEvent
 } from "../src/shared/schema.js";
 
 function makeConfig(overrides: Partial<HubConfig> = {}): HubConfig {
@@ -24,6 +31,8 @@ function makeConfig(overrides: Partial<HubConfig> = {}): HubConfig {
     apiKeys: [],
     cookieSecure: false,
     staticDir: path.resolve(process.cwd(), "dist/client"),
+    alertOnValidationErrors: true,
+    alertOnDeprecatedSync: true,
     ...overrides
   };
 }
@@ -35,12 +44,16 @@ function isoDaysAgo(daysAgo: number): string {
 describe("skanvil-hub", () => {
   const stores: SqliteTelemetryStore[] = [];
 
-  async function setup(configOverrides: Partial<HubConfig> = {}, dbPath = ":memory:") {
+  async function setup(
+    configOverrides: Partial<HubConfig> = {},
+    dbPath = ":memory:",
+    alertDispatcher?: AlertDispatcher
+  ) {
     const store = new SqliteTelemetryStore(dbPath);
     await store.init();
     stores.push(store);
     const config = makeConfig({ dbPath, ...configOverrides });
-    const app = createHubApp(store, config);
+    const app = createHubApp(store, config, { alertDispatcher });
     return { store, app, config };
   }
 
@@ -470,6 +483,7 @@ describe("skanvil-hub", () => {
     expect(feedback.groups).toHaveLength(1);
     expect(feedback.groups[0].count).toBe(2);
     expect(feedback.groups[0].suggestedEvalCaseCount).toBe(1);
+    expect(feedback.groups[0].status).toBe("open");
 
     const adoption = (await (await app.request("/api/dashboard/adoption")).json()) as AdoptionResponse;
     expect(adoption.totalSyncedProjects).toBe(2);
@@ -480,6 +494,267 @@ describe("skanvil-hub", () => {
       skill: "legacy-auth",
       replacedBy: "front-forms"
     });
+  });
+
+  it("supports skill drill-down, feedback triage, CSV/JSON export, and retention pruning", async () => {
+    const { app } = await setup();
+
+    const demoEvents = buildDemoEvents();
+    expect(TelemetryBatchSchema.safeParse({ events: demoEvents }).success).toBe(true);
+
+    const oldSnapshot: TelemetryEvent = {
+      schemaVersion: 1,
+      eventId: "old-snap-retention",
+      timestamp: isoDaysAgo(120),
+      type: "library.snapshot",
+      library: "@acme/skills",
+      skanvilVersion: "1.1.1",
+      totals: {
+        skills: 1,
+        alwaysLoadedTokens: 80,
+        bodyTokens: 200,
+        bodyLines: 40,
+        resourceFiles: 0,
+        resourceTokens: 0,
+        unreferencedFiles: 0
+      },
+      validation: { errors: 0, warnings: 0 },
+      evals: { totalTriggers: 1, passedTriggers: 1, failedTriggers: 0 },
+      skills: []
+    };
+    const oldInvocation: TelemetryEvent = {
+      schemaVersion: 1,
+      eventId: "old-inv-retention",
+      timestamp: isoDaysAgo(120),
+      type: "skill.invoked",
+      library: "@acme/skills",
+      skanvilVersion: "1.1.1",
+      skill: "front-react-forms",
+      agent: "claude",
+      outcome: "success"
+    };
+
+    const ingestRes = await app.request("/v1/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events: [oldSnapshot, oldInvocation, ...demoEvents] })
+    });
+    expect(ingestRes.status).toBe(200);
+
+    expect((await app.request("/api/dashboard/skill-detail")).status).toBe(400);
+    const detailRes = await app.request(
+      "/api/dashboard/skill-detail?library=@acme/skills&skill=back-db-migrations&days=30"
+    );
+    expect(detailRes.status).toBe(200);
+    const detail = (await detailRes.json()) as SkillDetailResponse;
+    expect(detail.summary?.invocations).toBeGreaterThan(0);
+    expect(detail.feedback).toHaveLength(1);
+    expect(detail.syncedProjects).toHaveLength(1);
+
+    const group = detail.feedback[0];
+    const triageRes = await app.request("/api/dashboard/feedback/triage", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        groupKey: group.groupKey,
+        library: group.library,
+        skill: group.skill,
+        step: group.step,
+        symptom: group.symptom,
+        status: "triaged",
+        note: "Assigned to backend platform"
+      })
+    });
+    expect(triageRes.status).toBe(200);
+
+    const triagedList = (await (
+      await app.request("/api/dashboard/feedback?days=30&status=triaged")
+    ).json()) as FeedbackResponse;
+    expect(triagedList.groups).toHaveLength(1);
+    expect(triagedList.groups[0].note).toBe("Assigned to backend platform");
+
+    const openList = (await (
+      await app.request("/api/dashboard/feedback?days=30&status=open")
+    ).json()) as FeedbackResponse;
+    expect(openList.groups).toHaveLength(1);
+    expect(openList.groups[0].skill).toBe("front-react-forms");
+
+    const csvRes = await app.request("/api/dashboard/export?format=csv&days=30");
+    expect(csvRes.status).toBe(200);
+    expect(csvRes.headers.get("content-disposition")).toContain("skanvil-telemetry.csv");
+    const csvText = await csvRes.text();
+    expect(csvText).toContain("eventId,type,timestamp,library");
+    expect(csvText).toContain("front-react-forms");
+
+    const jsonRes = await app.request("/api/dashboard/export?format=json&days=30");
+    expect(jsonRes.status).toBe(200);
+    const jsonPayload = (await jsonRes.json()) as { count: number; events: unknown[] };
+    expect(jsonPayload.count).toBe(demoEvents.length);
+
+    const pruneRes = await app.request("/api/dashboard/retention/prune", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ days: 60 })
+    });
+    expect(pruneRes.status).toBe(200);
+    const pruneBody = (await pruneRes.json()) as RetentionResult & { ok: boolean };
+    expect(pruneBody.deletedEvents).toBeGreaterThanOrEqual(2);
+    expect(pruneBody.deletedSnapshots).toBe(1);
+  });
+
+  it("dispatches webhook alerts when snapshots violate budgets, validation, evals or sync deprecated skills", async () => {
+    const delivered: Array<{ url: string; body: { alerts: string[]; text: string } }> = [];
+    const mockFetch: typeof fetch = async (input, init) => {
+      delivered.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)) as { alerts: string[]; text: string }
+      });
+      return new Response("ok", { status: 200 });
+    };
+
+    const dispatcher = new AlertDispatcher({
+      webhookUrl: "https://hooks.example.test/services/123",
+      maxStage1Tokens: 200,
+      minEvalPassRate: 0.9,
+      onValidationErrors: true,
+      onDeprecatedSync: true,
+      fetchFn: mockFetch
+    });
+
+    const { app } = await setup({}, ":memory:", dispatcher);
+
+    const events: TelemetryEvent[] = [
+      {
+        schemaVersion: 1,
+        eventId: "alert-snap-1",
+        timestamp: isoDaysAgo(0),
+        type: "library.snapshot",
+        library: "@acme/skills",
+        skanvilVersion: "1.1.1",
+        totals: {
+          skills: 2,
+          alwaysLoadedTokens: 350,
+          bodyTokens: 500,
+          bodyLines: 90,
+          resourceFiles: 0,
+          resourceTokens: 0,
+          unreferencedFiles: 0
+        },
+        validation: { errors: 2, warnings: 0 },
+        evals: { totalTriggers: 4, passedTriggers: 2, failedTriggers: 2 },
+        skills: [
+          {
+            name: "old-helper",
+            category: "transversal",
+            status: "deprecated",
+            replacedBy: "new-helper",
+            stage1Tokens: 150,
+            bodyLines: 40,
+            bodyTokens: 200,
+            resourceFiles: 0,
+            unreferencedFiles: 0,
+            evalCases: 0,
+            evalTriggers: 0,
+            valid: true
+          }
+        ]
+      },
+      {
+        schemaVersion: 1,
+        eventId: "alert-sync-1",
+        timestamp: isoDaysAgo(0),
+        type: "sync.applied",
+        library: "@acme/skills",
+        skanvilVersion: "1.1.1",
+        projectHash: "sha256:consumer-1",
+        target: "claude",
+        scope: "project",
+        mode: "copy",
+        added: ["old-helper"],
+        updated: [],
+        unchanged: [],
+        removed: [],
+        skipped: [],
+        installedSkills: ["old-helper"],
+        alwaysLoadedTokens: 150
+      }
+    ];
+
+    const res = await app.request("/v1/events", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ events })
+    });
+    expect(res.status).toBe(200);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0].url).toBe("https://hooks.example.test/services/123");
+    expect(delivered[0].body.alerts.length).toBe(4);
+    expect(delivered[0].body.text).toContain("validation error");
+    expect(delivered[0].body.text).toContain("exceed limit");
+    expect(delivered[0].body.text).toContain("eval trigger pass rate dropped");
+    expect(delivered[0].body.text).toContain("deprecated skill 'old-helper'");
+  });
+
+  it("supports PostgresTelemetryStore factory selection and SQL/analytics adapter contract", async () => {
+    const pgStoreFromFactory = createTelemetryStore(
+      makeConfig({ databaseUrl: "postgresql://user:pass@localhost:5432/skanvil_hub" })
+    );
+    expect(pgStoreFromFactory).toBeInstanceOf(PostgresTelemetryStore);
+
+    const executed: Array<{ sql: string; params: unknown[] }> = [];
+    const mockClient: PgQueryClient = {
+      async query<R = Record<string, unknown>>(sql: string, params: unknown[] = []) {
+        executed.push({ sql: sql.trim(), params });
+        if (sql.includes("INSERT INTO events")) {
+          return { rows: [] as R[], rowCount: params[0] === "dup" ? 0 : 1 };
+        }
+        return { rows: [] as R[], rowCount: 0 };
+      }
+    };
+
+    const pgStore = new PostgresTelemetryStore(mockClient);
+    await pgStore.init();
+    expect(executed[0].sql).toContain("CREATE TABLE IF NOT EXISTS feedback_triage");
+
+    const ingestRes = await pgStore.ingestEvents([
+      {
+        schemaVersion: 1,
+        eventId: "pg-1",
+        timestamp: isoDaysAgo(0),
+        type: "skill.invoked",
+        library: "@acme/skills",
+        skanvilVersion: "1.1.1",
+        skill: "front-forms",
+        agent: "claude",
+        outcome: "success"
+      },
+      {
+        schemaVersion: 1,
+        eventId: "dup",
+        timestamp: isoDaysAgo(0),
+        type: "skill.invoked",
+        library: "@acme/skills",
+        skanvilVersion: "1.1.1",
+        skill: "front-forms",
+        agent: "claude",
+        outcome: "success"
+      }
+    ]);
+    expect(ingestRes).toEqual({ accepted: 1, duplicates: 1 });
+    await pgStore.listLibraries();
+    await pgStore.getOverview({ days: 30 });
+    await pgStore.getSkillDetail("@acme/skills", "front-forms", 30);
+    await pgStore.setFeedbackTriage({
+      groupKey: "grp-1",
+      library: "@acme/skills",
+      skill: "front-forms",
+      step: "Step 1",
+      symptom: "Example mismatch",
+      status: "resolved"
+    });
+    expect(executed.some((entry) => entry.sql.includes("ON CONFLICT (group_key)"))).toBe(true);
   });
 
   it("persists data on disk SQLite and parses hub config defaults", async () => {
@@ -514,14 +789,26 @@ describe("skanvil-hub", () => {
 
       const cfg = loadHubConfig({
         PORT: "5555",
+        DATABASE_URL: "postgres://localhost:5432/hub",
         SKANVIL_HUB_API_KEYS: " k1 , k2 ",
         SKANVIL_HUB_ADMIN_TOKEN: "secret",
-        SKANVIL_HUB_COOKIE_SECURE: "true"
+        SKANVIL_HUB_COOKIE_SECURE: "true",
+        SKANVIL_HUB_RETENTION_DAYS: "45",
+        SKANVIL_HUB_WEBHOOK_URL: "https://hooks.example.test/1",
+        SKANVIL_HUB_ALERT_MAX_STAGE1_TOKENS: "2500",
+        SKANVIL_HUB_ALERT_MIN_EVAL_PASS_RATE: "85",
+        SKANVIL_HUB_ALERT_ON_VALIDATION_ERRORS: "false"
       });
       expect(cfg.port).toBe(5555);
+      expect(cfg.databaseUrl).toBe("postgres://localhost:5432/hub");
       expect(cfg.apiKeys).toEqual(["k1", "k2"]);
       expect(cfg.adminToken).toBe("secret");
       expect(cfg.cookieSecure).toBe(true);
+      expect(cfg.retentionDays).toBe(45);
+      expect(cfg.webhookUrl).toBe("https://hooks.example.test/1");
+      expect(cfg.alertMaxStage1Tokens).toBe(2500);
+      expect(cfg.alertMinEvalPassRate).toBe(0.85);
+      expect(cfg.alertOnValidationErrors).toBe(false);
     } finally {
       fs.rmSync(tmpDir, { recursive: true, force: true });
     }

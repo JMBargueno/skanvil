@@ -16,13 +16,24 @@ import { parseParamPairs } from "../core/params.js";
 import { createLibrary } from "../core/init.js";
 import { rebuildIndex } from "../core/reindex.js";
 import { analyzeLibraryStats } from "../core/stats.js";
-import { resolveSourceHandle, syncSkills, type TargetResult } from "../core/sync.js";
+import {
+  TARGET_PRESETS,
+  checkOutdatedSkills,
+  parseGitSource,
+  readManifestPinnedSha,
+  resolveSourceHandle,
+  syncSkills,
+  type TargetResult
+} from "../core/sync.js";
 import {
   buildSyncAppliedEvents,
+  fetchHubSkillsAudit,
   isTelemetryOptedOut,
   libraryDisplayName,
   resolveTelemetrySettings,
-  sendTelemetryEvents
+  sendTelemetryEvents,
+  tryAutoFlushTelemetryQueue,
+  type HubAuditResult
 } from "../core/telemetry.js";
 import { Library } from "../core/library.js";
 import { ejectSkillTemplate } from "../core/templates.js";
@@ -96,6 +107,8 @@ export interface ValidateOptions extends CommonOptions {
   skill?: string;
   /** `--format`: `text`, `github`, `sarif`, or `json`. */
   format?: ValidateOutputFormat | string;
+  /** `--embeddings`: use dense embedding vectors (`validation.embeddingsEndpoint` or `SKANVIL_EMBEDDINGS_URL`). */
+  embeddings?: boolean;
 }
 
 /**
@@ -115,7 +128,10 @@ export async function validateCommand(options: ValidateOptions): Promise<number>
   }
 
   const library = await openLibrary(options);
-  const result = await validateLibrary(library, { skill: options.skill });
+  const result = await validateLibrary(library, {
+    skill: options.skill,
+    embeddings: options.embeddings
+  });
   const blocking = result.errors + (options.strict ? result.warnings : 0);
 
   if (format === "json") {
@@ -300,6 +316,8 @@ export interface SyncCommandOptions extends CommonOptions {
   copy?: boolean;
   /** `--dry-run`. */
   dryRun?: boolean;
+  /** `--frozen`: fail without writing if installed skills differ from the source. */
+  frozen?: boolean;
   /** `--force`: also sync invalid skills. */
   force?: boolean;
   /** `--category` values. */
@@ -340,14 +358,26 @@ function splitList(values?: string[]): string[] {
 export async function syncCommand(dest: string | undefined, options: SyncCommandOptions): Promise<number> {
   const out = new Output("sync", options.json);
   const destination = destinationFor(dest, options.global);
+  const scope = options.global ? "user" : "project";
+  const explicitTargets = splitList(options.target);
+
+  let pinnedSha: string | undefined;
+  if (options.frozen && options.from) {
+    const git = parseGitSource(options.from);
+    if (git) {
+      const scanTargets = explicitTargets.length > 0 ? explicitTargets : Object.keys(TARGET_PRESETS);
+      pinnedSha = await readManifestPinnedSha(destination, scanTargets, git.canonical, scope);
+    }
+  }
+
   const handle = options.from
-    ? await resolveSourceHandle(options.from, destination)
+    ? await resolveSourceHandle(options.from, destination, { pinnedSha })
     : { root: resolveRoot(options), isTemporary: false, cleanup: async () => {} };
 
   try {
     const library = await Library.open(handle.root);
 
-    let targets = splitList(options.target);
+    let targets = explicitTargets;
     if (targets.length === 0) targets = library.config.sync.targets.length ? library.config.sync.targets : ["claude"];
     const requestedMode = options.link ? "link" : options.copy ? "copy" : library.config.sync.mode;
     const forbidLinkReason = handle.isTemporary ? "temporary Git source cannot be linked; copied instead" : undefined;
@@ -358,13 +388,16 @@ export async function syncCommand(dest: string | undefined, options: SyncCommand
       targets,
       mode: requestedMode,
       dryRun: options.dryRun,
+      frozen: options.frozen,
       force: options.force,
       categories: splitList(options.category),
       skills: splitList(options.skill),
       statuses: splitList(options.status),
       includeDeprecated: options.includeDeprecated,
-      scope: options.global ? "user" : "project",
+      scope,
       sourceLabel: handle.sourceLabel,
+      commitSha: handle.commitSha,
+      gitRef: handle.gitRef,
       forbidLinkReason,
       params: options.param?.length ? parseParamPairs(options.param) : undefined
     });
@@ -399,6 +432,7 @@ export async function syncCommand(dest: string | undefined, options: SyncCommand
             libraryName: libName
           });
           await sendTelemetryEvents(syncEvents, telemetry, { queueOnFailure: true });
+          await tryAutoFlushTelemetryQueue(telemetry);
         } catch {
           // Opt-in telemetry must never break `skanvil sync`.
         }
@@ -504,6 +538,12 @@ export async function buildCommand(options: BuildCommandOptions): Promise<number
 export interface DiffCommandOptions extends CommonOptions {
   /** `--format`: `text` or `markdown`. */
   format?: "text" | "markdown" | string;
+  /** `--from-hub`: include zombie and high-friction audit signals from `skanvil-hub`. */
+  fromHub?: boolean;
+  /** `--endpoint`: override `skanvil-hub` base URL when `--from-hub` is set. */
+  endpoint?: string;
+  /** `--admin-token`: override `SKANVIL_HUB_ADMIN_TOKEN` when `--from-hub` is set. */
+  adminToken?: string;
 }
 
 /**
@@ -527,12 +567,57 @@ export async function diffCommand(baseRef: string | undefined, options: DiffComm
   const out = new Output("diff", options.json);
   const diff = await diffLibrary(library, { baseRef });
 
+  let hubAudit: HubAuditResult | undefined;
+  let hubAuditWarning: string | undefined;
+  if (options.fromHub) {
+    const telemetry = resolveTelemetrySettings(library.config, { endpoint: options.endpoint });
+    try {
+      hubAudit = await fetchHubSkillsAudit(telemetry, {
+        library: library.config.name ? libraryDisplayName(library) : undefined,
+        adminToken: options.adminToken
+      });
+    } catch (error) {
+      hubAuditWarning = (error as Error).message;
+    }
+  }
+
   if (options.json) {
-    console.log(JSON.stringify(diff, null, 2));
+    console.log(
+      JSON.stringify(
+        {
+          ...diff,
+          ...(hubAudit ? { hubAudit } : {}),
+          ...(hubAuditWarning ? { hubAuditWarning } : {})
+        },
+        null,
+        2
+      )
+    );
     return 0;
   }
   if (format === "markdown") {
-    process.stdout.write(formatDiffMarkdown(diff));
+    let md = formatDiffMarkdown(diff);
+    if (hubAudit && (hubAudit.zombies.length > 0 || hubAudit.highFriction.length > 0)) {
+      const lines = ["", "### skanvil-hub Audit", ""];
+      if (hubAudit.zombies.length > 0) {
+        lines.push(
+          `- **Zombie skills (${hubAudit.days}d):** ${hubAudit.zombies
+            .map((z) => `\`${z.skill}\` (~${z.stage1Tokens ?? 0}t)`)
+            .join(", ")} — total wasted Stage-1 budget: ~${hubAudit.wastedStage1Tokens} tokens.`
+        );
+      }
+      if (hubAudit.highFriction.length > 0) {
+        lines.push(
+          `- **High-friction skills:** ${hubAudit.highFriction
+            .map((f) => `\`${f.skill}\` (${f.frictionEvents} reports)`)
+            .join(", ")}.`
+        );
+      }
+      md += `${lines.join("\n")}\n`;
+    } else if (hubAuditWarning) {
+      md += `\n> skanvil-hub audit skipped: ${hubAuditWarning}\n`;
+    }
+    process.stdout.write(md);
     return 0;
   }
 
@@ -567,5 +652,86 @@ export async function diffCommand(baseRef: string | undefined, options: DiffComm
   for (const reg of diff.triggerRegressions) {
     out.warn(`   trigger regression [${reg.skill}/${reg.kind}]: "${reg.prompt}" (${reg.reason ?? "failed"})`);
   }
+  if (hubAudit) {
+    for (const z of hubAudit.zombies) {
+      out.warn(
+        `   hub zombie (${hubAudit.days}d): ${z.skill} (~${z.stage1Tokens ?? 0} unused Stage-1 tokens; consider deprecating)`
+      );
+    }
+    for (const f of hubAudit.highFriction) {
+      out.warn(`   hub friction: ${f.skill} (${f.frictionEvents} report(s))`);
+    }
+  } else if (hubAuditWarning) {
+    out.warn(`   hub audit unavailable: ${hubAuditWarning}`);
+  }
   return 0;
+}
+
+/** Options of `skanvil outdated`. */
+export interface OutdatedCommandOptions extends CommonOptions {
+  /** `--target`: agent preset(s) or relative folders to inspect. */
+  target?: string[];
+  /** `--global`: check user-level agent folders. */
+  global?: boolean;
+  /** `--from`: filter to a matching source specifier. */
+  from?: string;
+  /** `--strict`: exit with code 1 when any synced source is outdated or unreachable. */
+  strict?: boolean;
+}
+
+/**
+ * `skanvil outdated [dest]`: checks installed `.skanvil-sync.json` targets against their source
+ * libraries and reports pending updates, SHA drift, and Stage-1 token deltas.
+ *
+ * @param dest - Project folder (ignored when `--global` is set).
+ * @param options - Parsed CLI options.
+ * @returns Exit code (`0`, or `1` when `--strict` and drift/errors exist).
+ */
+export async function outdatedCommand(dest: string | undefined, options: OutdatedCommandOptions): Promise<number> {
+  const out = new Output("outdated", options.json);
+  const destination = destinationFor(dest, options.global);
+  const targets = splitList(options.target);
+  const report = await checkOutdatedSkills(destination, {
+    ...(targets.length > 0 ? { targets } : {}),
+    scope: options.global ? "user" : "project",
+    sourceFilter: options.from
+  });
+
+  if (options.json) {
+    console.log(JSON.stringify(report, null, 2));
+    return options.strict && (report.outdatedCount > 0 || report.errorCount > 0) ? 1 : 0;
+  }
+
+  if (report.entries.length === 0) {
+    out.info("No synced skill manifests (.skanvil-sync.json) found.");
+    return 0;
+  }
+
+  for (const entry of report.entries) {
+    if (entry.status === "error") {
+      out.warn(`   ${entry.target} (${entry.source}): error (${entry.error})`);
+      continue;
+    }
+    if (entry.status === "up-to-date") {
+      out.print(`   ${entry.target} (${entry.source}): up to date (${entry.unchangedCount} skill(s))`);
+      continue;
+    }
+    const sign = entry.stage1TokenDelta > 0 ? `+${entry.stage1TokenDelta}` : String(entry.stage1TokenDelta);
+    const shaNote =
+      entry.installedCommitSha && entry.latestCommitSha && entry.installedCommitSha !== entry.latestCommitSha
+        ? `, commit ${entry.installedCommitSha.slice(0, 7)}->${entry.latestCommitSha.slice(0, 7)}`
+        : "";
+    out.warn(
+      `   ${entry.target} (${entry.source}): outdated (+${entry.added.length} added, ~${entry.updated.length} updated, -${entry.removed.length} removed, ${sign} Stage-1 tokens${shaNote})`
+    );
+  }
+
+  if (report.outdatedCount === 0 && report.errorCount === 0) {
+    out.success(`All ${report.entries.length} synced target(s) are up to date.`);
+  } else {
+    out.info(
+      `Found ${report.outdatedCount} outdated source(s) and ${report.errorCount} error(s). Run 'skanvil sync' to update.`
+    );
+  }
+  return options.strict && (report.outdatedCount > 0 || report.errorCount > 0) ? 1 : 0;
 }

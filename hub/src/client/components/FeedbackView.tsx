@@ -1,6 +1,63 @@
-import type { FeedbackResponse } from "../../shared/schema.js";
+import { useState } from "react";
 
-export function FeedbackView({ data }: { data: FeedbackResponse }) {
+import type { FeedbackGroupRow, FeedbackResponse, FeedbackStatus } from "../../shared/schema.js";
+
+const STATUS_FILTERS: Array<{ value: "all" | FeedbackStatus; label: string }> = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "triaged", label: "Triaged" },
+  { value: "resolved", label: "Resolved" }
+];
+
+function statusBadgeClass(status: FeedbackStatus): string {
+  if (status === "resolved") return "badge-success";
+  if (status === "triaged") return "badge-accent";
+  return "badge-warn";
+}
+
+export function FeedbackView({
+  data,
+  statusFilter,
+  onStatusFilterChange,
+  onTriageChange
+}: {
+  data: FeedbackResponse;
+  statusFilter: "all" | FeedbackStatus;
+  onStatusFilterChange: (status: "all" | FeedbackStatus) => void;
+  onTriageChange: (group: FeedbackGroupRow, nextStatus: FeedbackStatus) => Promise<void>;
+}) {
+  const [updatingKey, setUpdatingKey] = useState<string | null>(null);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const handleStatusChange = async (group: FeedbackGroupRow, nextStatus: FeedbackStatus) => {
+    setUpdatingKey(group.groupKey);
+    try {
+      await onTriageChange(group, nextStatus);
+    } finally {
+      setUpdatingKey(null);
+    }
+  };
+
+  const handleCopyIssue = async (group: FeedbackGroupRow) => {
+    const lines = [
+      `### Skill friction report: \`${group.skill}\` (${group.library})`,
+      "",
+      `- **Step**: ${group.step}`,
+      `- **Occurrences**: ${group.count}`,
+      `- **Symptom**: ${group.symptom}`,
+      ...(group.proposedFixes.length > 0 ? [`- **Proposed fix**: ${group.proposedFixes[0]}`] : []),
+      "",
+      "Run `npx skanvil feedback promote --prune` in the library repo if a suggested eval case is ready."
+    ];
+    try {
+      await navigator.clipboard.writeText(lines.join("\n"));
+      setCopiedKey(group.groupKey);
+      setTimeout(() => setCopiedKey(null), 1600);
+    } catch {
+      // ignore clipboard refusal
+    }
+  };
+
   return (
     <div className="stack-col">
       <div className="banner">
@@ -13,8 +70,22 @@ export function FeedbackView({ data }: { data: FeedbackResponse }) {
       </div>
 
       <div className="card">
-        <div className="card-header">
-          <h3 className="card-title">Grouped Friction Queue ({data.groups.length})</h3>
+        <div className="toolbar">
+          <div className="filters">
+            <h3 className="card-title">Grouped Friction Queue ({data.groups.length})</h3>
+            <div className="segmented-sm">
+              {STATUS_FILTERS.map((opt) => (
+                <button
+                  key={opt.value}
+                  type="button"
+                  className={`btn btn-sm ${statusFilter === opt.value ? "btn-primary" : ""}`}
+                  onClick={() => onStatusFilterChange(opt.value)}
+                >
+                  {opt.label}
+                </button>
+              ))}
+            </div>
+          </div>
           <span className="muted" style={{ fontSize: 12 }}>
             {data.totalEvents} total report(s)
           </span>
@@ -22,7 +93,7 @@ export function FeedbackView({ data }: { data: FeedbackResponse }) {
 
         {data.groups.length === 0 ? (
           <p className="muted" style={{ margin: 0 }}>
-            No feedback events recorded in this time window.
+            No feedback events match this filter.
           </p>
         ) : (
           <div className="table-wrap">
@@ -35,12 +106,13 @@ export function FeedbackView({ data }: { data: FeedbackResponse }) {
                   <th>Symptom &amp; Proposed Fix</th>
                   <th>Reports</th>
                   <th>Eval Cases</th>
-                  <th>Latest</th>
+                  <th>Triage</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {data.groups.map((group) => (
-                  <tr key={`${group.library}:${group.skill}:${group.step}:${group.symptom}`}>
+                  <tr key={group.groupKey}>
                     <td>
                       <span className="code-chip">{group.skill}</span>
                     </td>
@@ -57,6 +129,9 @@ export function FeedbackView({ data }: { data: FeedbackResponse }) {
                           Fix: {group.proposedFixes[0]}
                         </div>
                       )}
+                      <div className="muted" style={{ fontSize: 11, marginTop: 4 }}>
+                        Latest: {group.latestTimestamp.slice(0, 10)}
+                      </div>
                     </td>
                     <td>
                       <span className="badge badge-warn">{group.count}</span>
@@ -68,8 +143,24 @@ export function FeedbackView({ data }: { data: FeedbackResponse }) {
                         <span className="muted">0</span>
                       )}
                     </td>
-                    <td className="muted" style={{ fontSize: 12 }}>
-                      {group.latestTimestamp.slice(0, 10)}
+                    <td>
+                      <select
+                        aria-label={`Triage status for ${group.skill}`}
+                        className={`select badge ${statusBadgeClass(group.status)}`}
+                        style={{ padding: "4px 8px", fontSize: 12 }}
+                        value={group.status}
+                        disabled={updatingKey === group.groupKey}
+                        onChange={(e) => void handleStatusChange(group, e.target.value as FeedbackStatus)}
+                      >
+                        <option value="open">open</option>
+                        <option value="triaged">triaged</option>
+                        <option value="resolved">resolved</option>
+                      </select>
+                    </td>
+                    <td>
+                      <button type="button" className="btn btn-sm" onClick={() => void handleCopyIssue(group)}>
+                        {copiedKey === group.groupKey ? "Copied" : "Copy Issue"}
+                      </button>
                     </td>
                   </tr>
                 ))}

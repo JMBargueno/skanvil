@@ -97,7 +97,15 @@ Each target folder holds a `.skanvil-sync.json` manifest (Manifest v2, reading a
 
 - the skills owned by that library source;
 - a content hash and installation mode (`copy` or `link`) per skill;
-- remembered `--param` values for that source.
+- remembered `--param` values for that source;
+- optional Git pinning metadata (`commitSha` and `ref`) when synced from a Git repository.
+
+### Pinning, `--frozen`, and `skanvil outdated`
+
+When syncing from a Git repository (`--from`), `skanvil` resolves the active `commitSha` and `ref` and writes them to `.skanvil-sync.json`. Subsequent runs reuse that recorded pinning unless `--from` changes or `--frozen` is used to enforce reproducibility in CI:
+
+- `skanvil sync --frozen` verifies that the target's synced files and Git `commitSha` already match `.skanvil-sync.json` without mutating disk or pulling new commits, failing immediately if any synced skill drifted or lacks a manifest entry.
+- `skanvil outdated [dest]` checks synced Git sources against remote upstream commits and exits non-zero when `--strict` is set and updates are available.
 
 On every run:
 

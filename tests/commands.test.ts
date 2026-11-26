@@ -17,7 +17,8 @@ import {
 import { CONFIG_FILE } from "../src/core/config.js";
 import { diffLibrary, formatDiffMarkdown } from "../src/core/diff.js";
 import { doctor } from "../src/core/doctor.js";
-import { checkTriggerRouting, exportEvalDataset, routePrompt } from "../src/core/evals.js";
+import { EVALS_FILE, checkTriggerRouting, exportEvalDataset, routePrompt } from "../src/core/evals.js";
+import { runEvalCases } from "../src/core/eval-runner.js";
 import { FEEDBACK_FILE, promoteFeedback, readFeedbackLog, summarizeFeedback } from "../src/core/feedback.js";
 import { importSkills } from "../src/core/import.js";
 import { createLibrary, parseProfile } from "../src/core/init.js";
@@ -25,20 +26,36 @@ import { Library } from "../src/core/library.js";
 import { rebuildIndex, reconcileIndex } from "../src/core/reindex.js";
 import { editSkill, removeSkill, scaffoldSkill } from "../src/core/skills.js";
 import { analyzeLibraryStats } from "../src/core/stats.js";
-import { MANIFEST_FILE, resolveSourceHandle, resolveTarget, syncSkills, type ManifestV2 } from "../src/core/sync.js";
+import {
+  MANIFEST_FILE,
+  checkOutdatedSkills,
+  readManifestPinnedSha,
+  resolveSourceHandle,
+  resolveTarget,
+  syncSkills,
+  type ManifestV2
+} from "../src/core/sync.js";
 import {
   buildFeedbackEvents,
   buildLibrarySnapshotEvent,
   buildSkillInvokedEvent,
+  fetchHubSkillsAudit,
   flushTelemetryQueue,
   resolveTelemetrySettings,
   sendTelemetryEvents,
+  tryAutoFlushTelemetryQueue,
   type TelemetryEvent
 } from "../src/core/telemetry.js";
-import { installTelemetryHooks, parseAgentHookPayload } from "../src/core/telemetry-hooks.js";
+import {
+  HOOK_AGENTS,
+  collectTranscriptEvents,
+  installTelemetryHooks,
+  parseAgentHookPayload,
+  processAgentHookPayload
+} from "../src/core/telemetry-hooks.js";
 import { ejectSkillTemplate } from "../src/core/templates.js";
 import { packageVersion } from "../src/util/paths.js";
-import { findBrokenReferences, validateLibrary } from "../src/core/validate.js";
+import { fetchEmbeddings, findBrokenReferences, validateLibrary } from "../src/core/validate.js";
 import { formatGitHubAnnotations, formatSarif } from "../src/core/validate-format.js";
 
 function tmp(): string {
@@ -1859,5 +1876,390 @@ describe("telemetry client, offline queue, and agent hooks", () => {
 
     const second = await installTelemetryHooks({ dest: project, targets: ["claude", "cursor", "gemini"] });
     expect(second.results.every((item) => item.status === "already-configured")).toBe(true);
+  });
+
+  test("supports 7-agent hooks, stateful session timing, transcripts, auto-flush and hub audit", async () => {
+    const project = tmp();
+    const sessionsDir = path.join(tmp(), "sessions");
+    fs.mkdirSync(path.join(project, ".claude", "skills", "front-auth"), { recursive: true });
+    fs.writeFileSync(
+      path.join(project, ".claude", "skills", "front-auth", "SKILL.md"),
+      "---\nname: front-auth\ndescription: Checks login flows carefully.\n---\n",
+      "utf8"
+    );
+
+    // Install all 7 agent hook configs and check idempotency.
+    const allInstalled = await installTelemetryHooks({ dest: project, targets: [...HOOK_AGENTS] });
+    expect(allInstalled.results).toHaveLength(7);
+    expect(allInstalled.results.every((r) => r.status === "installed")).toBe(true);
+    expect(fs.existsSync(path.join(project, ".github", "hooks", "skanvil-telemetry.json"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".windsurf", "hooks.json"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".codex", "hooks.json"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".opencode", "hooks.json"))).toBe(true);
+
+    // Stateful hook lifecycle: skill read -> extra tool -> failed tool -> Stop emits duration + tool counts.
+    const s1 = await processAgentHookPayload(
+      "claude",
+      JSON.stringify({
+        session_id: "sess-timed",
+        cwd: project,
+        tool_name: "Read",
+        tool_input: { file_path: path.join(project, ".claude", "skills", "front-auth", "SKILL.md") }
+      }),
+      { sessionsDir, now: 1000 }
+    );
+    expect(s1).toBeNull();
+    const s2 = await processAgentHookPayload(
+      "claude",
+      JSON.stringify({
+        session_id: "sess-timed",
+        cwd: project,
+        tool_name: "Bash",
+        tool_input: { command: "npm test" }
+      }),
+      { sessionsDir, now: 2000 }
+    );
+    expect(s2).toBeNull();
+    const s3 = await processAgentHookPayload(
+      "claude",
+      JSON.stringify({
+        session_id: "sess-timed",
+        cwd: project,
+        tool_name: "Edit",
+        tool_input: { file_path: "src/app.ts" },
+        tool_response: { isError: true }
+      }),
+      { sessionsDir, now: 3500 }
+    );
+    expect(s3).toBeNull();
+    const completed = await processAgentHookPayload(
+      "claude",
+      JSON.stringify({ hook_event_name: "Stop", session_id: "sess-timed" }),
+      { sessionsDir, now: 6500 }
+    );
+    expect(completed).toMatchObject({
+      agent: "claude",
+      skill: "front-auth",
+      durationMs: 5500,
+      toolCalls: 3,
+      failedToolCalls: 1,
+      outcome: "error"
+    });
+
+    // Transcript parser extracts duration and tool calls.
+    const transcriptDir = tmp();
+    fs.writeFileSync(
+      path.join(transcriptDir, "run-1.jsonl"),
+      [
+        JSON.stringify({
+          timestamp: "2026-11-26T09:00:00.000Z",
+          sessionId: "tr-1",
+          model: "claude-sonnet",
+          message: {
+            content: [{ type: "tool_use", name: "Skill", input: { skill: "front-auth" } }]
+          }
+        }),
+        JSON.stringify({
+          timestamp: "2026-11-26T09:00:04.500Z",
+          message: { content: [{ type: "tool_use", name: "Bash", input: { command: "npm test" } }] }
+        })
+      ].join("\n"),
+      "utf8"
+    );
+    const parsedTranscript = await collectTranscriptEvents(transcriptDir, {
+      agent: "claude",
+      library: "@acme/skills",
+      projectPath: project
+    });
+    expect(parsedTranscript.filesScanned).toBe(1);
+    expect(parsedTranscript.events).toHaveLength(1);
+    expect(parsedTranscript.events[0]).toMatchObject({
+      skill: "front-auth",
+      library: "@acme/skills",
+      durationMs: 4500,
+      toolCalls: 2,
+      failedToolCalls: 0,
+      source: "transcript"
+    });
+
+    // Auto-flush & Hub Audit against local HTTP server.
+    const received: TelemetryEvent[] = [];
+    const server = http.createServer((req, res) => {
+      if (req.method === "POST" && req.url === "/v1/events") {
+        const chunks: Buffer[] = [];
+        req.on("data", (chunk) => chunks.push(chunk));
+        req.on("end", () => {
+          const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { events: TelemetryEvent[] };
+          received.push(...body.events);
+          res.writeHead(200, { "content-type": "application/json" });
+          res.end(JSON.stringify({ ok: true, accepted: body.events.length, duplicates: 0 }));
+        });
+        return;
+      }
+      if (req.method === "GET" && req.url?.startsWith("/api/dashboard/skills")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(
+          JSON.stringify({
+            library: "@acme/skills",
+            days: 30,
+            skills: [
+              {
+                library: "@acme/skills",
+                skill: "back-zombie",
+                category: "back",
+                owner: "@api",
+                status: "active",
+                replacedBy: null,
+                stage1Tokens: 110,
+                invocations: 0,
+                frictionEvents: 0,
+                frictionRate: null,
+                syncedProjects: 1,
+                lastUsedAt: null,
+                isZombie: true
+              },
+              {
+                library: "@acme/skills",
+                skill: "front-auth",
+                category: "front",
+                owner: "@sec",
+                status: "active",
+                replacedBy: null,
+                stage1Tokens: 90,
+                invocations: 4,
+                frictionEvents: 2,
+                frictionRate: 0.5,
+                syncedProjects: 2,
+                lastUsedAt: "2026-11-26T09:00:00Z",
+                isZombie: false
+              }
+            ]
+          })
+        );
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const addr = server.address() as { port: number };
+      const queueFile = path.join(tmp(), "auto-flush.jsonl");
+      fs.writeFileSync(queueFile, `${JSON.stringify(parsedTranscript.events[0])}\n`, "utf8");
+      const settings = resolveTelemetrySettings(undefined, {
+        endpoint: `http://127.0.0.1:${addr.port}`,
+        queueFile
+      });
+      const autoFlushed = await tryAutoFlushTelemetryQueue(settings);
+      expect(autoFlushed?.sent).toBe(1);
+      expect(received).toHaveLength(1);
+
+      const audit = await fetchHubSkillsAudit(settings, { library: "@acme/skills", days: 30, adminToken: "adm" });
+      expect(audit.zombies.map((z) => z.skill)).toEqual(["back-zombie"]);
+      expect(audit.wastedStage1Tokens).toBe(110);
+      expect(audit.highFriction.map((f) => f.skill)).toEqual(["front-auth"]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+});
+
+describe("git pinning, frozen sync, outdated, eval runner, and semantic overlap", () => {
+  test("pins commitSha on Git sync, blocks drift under --frozen, and detects outdated targets", async () => {
+    const repo = await makeLibrary({ name: "remote-lib", agentSkill: false });
+    await scaffoldSkill(repo, {
+      type: "front",
+      name: "forms",
+      description: "Validates forms cleanly. Use when modifying UI forms."
+    });
+    const gitEnv = {
+      ...process.env,
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.com",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.com"
+    };
+    execFileSync("git", ["init", "-b", "main"], { cwd: repo });
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "v1"], { cwd: repo, env: gitEnv });
+    const v1Sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    const consumer = tmp();
+    const spec = `git+${pathToFileURL(repo).toString()}#main`;
+    const handle1 = await resolveSourceHandle(spec, consumer);
+    try {
+      expect(handle1.commitSha).toBe(v1Sha);
+      await syncSkills(await Library.open(handle1.root), {
+        dest: consumer,
+        targets: ["claude"],
+        sourceLabel: handle1.sourceLabel,
+        commitSha: handle1.commitSha,
+        gitRef: handle1.gitRef,
+        forbidLinkReason: "temp git"
+      });
+    } finally {
+      await handle1.cleanup();
+    }
+
+    expect(await readManifestPinnedSha(consumer, ["claude"], spec)).toBe(v1Sha);
+
+    // Commit an upstream update.
+    await scaffoldSkill(repo, {
+      type: "back",
+      name: "queues",
+      description: "Audits worker queues cleanly. Use when adding async jobs."
+    });
+    execFileSync("git", ["add", "."], { cwd: repo });
+    execFileSync("git", ["commit", "-m", "v2"], { cwd: repo, env: gitEnv });
+    const v2Sha = execFileSync("git", ["rev-parse", "HEAD"], { cwd: repo, encoding: "utf8" }).trim();
+
+    // Pinned checkout stays cleanly frozen against existing consumer target.
+    const pinnedHandle = await resolveSourceHandle(spec, consumer, { pinnedSha: v1Sha });
+    try {
+      expect(pinnedHandle.commitSha).toBe(v1Sha);
+      const frozenRes = await syncSkills(await Library.open(pinnedHandle.root), {
+        dest: consumer,
+        targets: ["claude"],
+        sourceLabel: pinnedHandle.sourceLabel,
+        commitSha: pinnedHandle.commitSha,
+        frozen: true,
+        forbidLinkReason: "temp git"
+      });
+      expect(frozenRes[0].unchanged).toEqual(["front-forms"]);
+    } finally {
+      await pinnedHandle.cleanup();
+    }
+
+    // Unpinned frozen sync detects upstream addition and throws before mutating disk.
+    const latestHandle = await resolveSourceHandle(spec, consumer);
+    try {
+      await expect(
+        syncSkills(await Library.open(latestHandle.root), {
+          dest: consumer,
+          targets: ["claude"],
+          sourceLabel: latestHandle.sourceLabel,
+          frozen: true,
+          forbidLinkReason: "temp git"
+        })
+      ).rejects.toThrow(/Frozen sync failed/);
+      expect(fs.existsSync(path.join(consumer, ".claude", "skills", "back-queues"))).toBe(false);
+    } finally {
+      await latestHandle.cleanup();
+    }
+
+    const report = await checkOutdatedSkills(consumer);
+    expect(report.outdatedCount).toBe(1);
+    expect(report.entries[0]).toMatchObject({
+      target: "claude",
+      source: spec,
+      status: "outdated",
+      installedCommitSha: v1Sha,
+      latestCommitSha: v2Sha,
+      added: ["back-queues"]
+    });
+  });
+
+  test("runEvalCases supports mock ablation lift and custom judge callbacks", async () => {
+    const root = await makeLibrary({ agentSkill: false });
+    await scaffoldSkill(root, {
+      type: "front",
+      name: "aria",
+      description: "Audits ARIA accessibility. Use when reviewing interactive React dialogs."
+    });
+    fs.writeFileSync(
+      path.join(root, "skills", "front-aria", "SKILL.md"),
+      [
+        "---",
+        "name: front-aria",
+        "description: Audits ARIA accessibility. Use when reviewing interactive React dialogs.",
+        "---",
+        "",
+        "## Objective\nCheck dialogs.",
+        "## When to Activate This Skill\nWhen editing dialogs.",
+        '## Instructions\n1. Always verify `ARIA_CHECK_OK` and `role="dialog"`.',
+        "## Error Recovery\n| Failure | Cause | Recovery Action |\n| --- | --- | --- |\n| Missing role | Plain div | Add role attribute. |",
+        "## Output Format\nSummary.",
+        "## Quality Criteria\nPass."
+      ].join("\n"),
+      "utf8"
+    );
+    fs.writeFileSync(
+      path.join(root, "skills", "front-aria", EVALS_FILE),
+      JSON.stringify({
+        cases: [
+          {
+            id: "dialog-aria",
+            split: "eval",
+            prompt: "Audit Modal.tsx accessibility",
+            expected: ["Verifies dialog role and ARIA_CHECK_OK marker."],
+            mustContain: ["ARIA_CHECK_OK"],
+            mustNotContain: ["FORBIDDEN_TEXT"]
+          }
+        ]
+      }),
+      "utf8"
+    );
+
+    const ablation = await runEvalCases(root, { provider: "mock", ablation: true, split: "eval" });
+    expect(ablation.passed).toBe(1);
+    expect(ablation.ablationSummary).toEqual({ withSkillPassed: 1, baselinePassed: 0, netLift: 1 });
+
+    const judged = await runEvalCases(root, {
+      provider: "openai",
+      judge: true,
+      complete: async ({ systemPrompt }) =>
+        systemPrompt.startsWith("You are an impartial evaluator")
+          ? JSON.stringify({ passed: true, score: 0.95, reason: "Meets criteria" })
+          : "Use ARIA_CHECK_OK carefully."
+    });
+    expect(judged.passed).toBe(1);
+    expect(judged.cases[0].judgeResult).toMatchObject({ passed: true, score: 0.95 });
+  });
+
+  test("semantic-overlap rule detects synonym paraphrases and optional HTTP embeddings", async () => {
+    const root = await makeLibrary({ agentSkill: false });
+    await scaffoldSkill(root, {
+      type: "back",
+      name: "postgres-audit",
+      description: "Audits PostgreSQL SQL database tables for locks. Use when reviewing database migrations."
+    });
+    await scaffoldSkill(root, {
+      type: "back",
+      name: "pg-inspector",
+      description:
+        "Reviews Postgres DB schemas and SQL tables for bottlenecks. Use when inspecting database migrations."
+    });
+
+    const offline = await validateLibrary(await Library.open(root));
+    expect(offline.diagnostics.some((d) => d.rule === "semantic-overlap")).toBe(true);
+
+    const embedded = await validateLibrary(await Library.open(root), {
+      embedFn: async (texts) => texts.map(() => [0.8, 0.6])
+    });
+    expect(embedded.diagnostics.find((d) => d.rule === "semantic-overlap")?.message).toContain("embedding similarity");
+
+    // Verify built-in fetchEmbeddings against a local OpenAI-compatible mock server.
+    const srv = http.createServer((req, res) => {
+      const chunks: Buffer[] = [];
+      req.on("data", (c) => chunks.push(c));
+      req.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { input: string[] };
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ data: body.input.map((_, i) => ({ embedding: [1, i * 0.01] })) }));
+      });
+    });
+    await new Promise<void>((resolve) => srv.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const addr = srv.address() as { port: number };
+      const vecs = await fetchEmbeddings(`http://127.0.0.1:${addr.port}/v1/embeddings`, ["a", "b"], {
+        apiKey: "embed-test"
+      });
+      expect(vecs).toEqual([
+        [1, 0],
+        [1, 0.01]
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => srv.close(() => resolve()));
+    }
   });
 });
