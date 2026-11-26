@@ -355,6 +355,108 @@ skanvil feedback promote --dry-run
 skanvil feedback promote --prune --json
 ```
 
+## `feedback push`
+
+Upload sanitized friction reports from `.skanvil-feedback.jsonl` to a self-hosted `skanvil-hub` instance. Credential patterns and personal home directory paths are redacted locally, and each event receives a deterministic `fb_<hash>` ID so retries stay idempotent. See [Telemetry and hub](telemetry-and-hub.md).
+
+| Option             | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `--file <path>`    | Feedback JSONL log path (default: `.skanvil-feedback.jsonl`).        |
+| `--skill <name>`   | Only push entries for one skill.                                     |
+| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config). |
+| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).             |
+| `--dry-run`        | Build redacted events without sending or queueing.                   |
+| `--no-queue`       | Fail immediately instead of buffering to the local offline queue.    |
+
+```bash
+skanvil feedback push --dry-run
+skanvil feedback push --endpoint https://skanvil-hub.internal --json
+```
+
+`--json` prints `{ file, invalidLines, sent, queued, dryRun, skippedReason?, error?, events }`.
+
+## `telemetry snapshot`
+
+Collect Stage-1/2/3 token budgets, validation error/warning counts, offline eval trigger pass rates, and per-skill lifecycle metadata, and send a `library.snapshot` event to `skanvil-hub`.
+
+| Option             | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config). |
+| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).             |
+| `--dry-run`        | Build and inspect the snapshot without sending or queueing.          |
+| `--no-queue`       | Exit with code 1 instead of buffering locally if delivery fails.     |
+
+```bash
+skanvil telemetry snapshot --dry-run --json
+skanvil telemetry snapshot --no-queue
+```
+
+`--json` prints `{ sent, queued, dryRun, skippedReason?, error?, events }`.
+
+## `telemetry emit`
+
+Manually emit a `skill.invoked` usage event from scripts, CI pipelines, or agent workflows.
+
+| Option                    | Description                                                          |
+| ------------------------- | -------------------------------------------------------------------- |
+| `--skill <name>`          | Skill folder name (required).                                        |
+| `--library <name>`        | Owning library identifier (default: config name or `"local"`).       |
+| `--agent <name>`          | Agent name (`claude`, `cursor`, `gemini`, etc.).                     |
+| `--model <name>`          | Model identifier.                                                    |
+| `--outcome <value>`       | `success` (default), `error`, `friction`, or `unknown`.              |
+| `--duration-ms <n>`       | Execution duration in milliseconds (non-negative integer).           |
+| `--tool-calls <n>`        | Total tool calls (non-negative integer).                             |
+| `--failed-tool-calls <n>` | Failed tool calls (non-negative integer).                            |
+| `--endpoint <url>`        | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config). |
+| `--api-key <key>`         | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).             |
+| `--dry-run`               | Build the event without sending.                                     |
+| `--no-queue`              | Fail instead of buffering to the offline queue on network errors.    |
+
+```bash
+skanvil telemetry emit --skill front-api-review --agent claude --outcome success --duration-ms 1250
+```
+
+`--json` prints `{ sent, queued, dryRun, skippedReason?, error?, events }`.
+
+## `telemetry hook`
+
+Read an agent hook JSON payload on `stdin` (`PostToolUse`, `afterFileRead`, `AfterTool`), extract skill invocation metadata when a skill's `SKILL.md` is read or a `Skill` tool runs, and send or queue a `skill.invoked` event. Always exits `0` silently so coding agents are never blocked.
+
+| Option             | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `--agent <name>`   | Hook source: `claude`, `cursor`, or `gemini` (required).             |
+| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config). |
+| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).             |
+
+## `telemetry push`
+
+Flush previously queued offline telemetry events from `~/.skanvil/telemetry-queue.jsonl` (or `SKANVIL_TELEMETRY_QUEUE`) to `skanvil-hub`, removing delivered events cleanly.
+
+| Option             | Description                                                          |
+| ------------------ | -------------------------------------------------------------------- |
+| `--endpoint <url>` | `skanvil-hub` base URL (default: `SKANVIL_TELEMETRY_URL` or config). |
+| `--api-key <key>`  | Bearer ingestion key (default: `SKANVIL_TELEMETRY_KEY`).             |
+| `--dry-run`        | Count queued events without sending or modifying the queue file.     |
+
+`--json` prints `{ sent, queued, remaining, invalidLines, dryRun, skippedReason?, error?, events }`.
+
+## `telemetry install-hooks [dest]`
+
+Idempotently install non-blocking telemetry hooks into `claude` (`.claude/settings.json`), `cursor` (`.cursor/hooks.json`), and/or `gemini` (`.gemini/settings.json`) settings without overwriting unrelated user rules.
+
+| Option            | Description                                                                   |
+| ----------------- | ----------------------------------------------------------------------------- |
+| `--target <name>` | `claude`, `cursor`, `gemini` (repeatable or comma-separated; default: all 3). |
+| `--global`        | Write into user home config folders instead of a project (`dest` disallowed). |
+| `--dry-run`       | Preview settings changes without writing.                                     |
+
+```bash
+skanvil telemetry install-hooks --target claude,cursor,gemini --dry-run
+skanvil telemetry install-hooks --global --target claude
+```
+
+`--json` prints `{ dryRun, scope, results: [{ agent, file, status }] }`.
+
 ## `templates eject`
 
 Copy the built-in skill template into the library so you can edit it.

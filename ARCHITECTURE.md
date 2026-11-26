@@ -13,7 +13,8 @@ src/
 │   ├── skills.ts          add, edit (including lifecycle), list (with filters), import
 │   ├── library.ts         init, validate, diff, index, doctor, stats, templates eject, build, install-skill, sync
 │   ├── evals.ts           eval triggers, eval route, eval export
-│   ├── feedback.ts        feedback list, feedback promote
+│   ├── feedback.ts        feedback list, feedback promote, feedback push
+│   ├── telemetry.ts       telemetry snapshot, emit, hook, push, install-hooks
 │   └── wizard.ts          interactive menu-driven assistant on top of the same core calls
 ├── core/                  all behaviour; no console output, no process exit
 │   ├── config.ts          .skanvilrc.json zod schema, default preset, resolution and checks
@@ -27,6 +28,8 @@ src/
 │   ├── stats.ts           3-stage context-budget analyzer (`name`+`description`, body, resources)
 │   ├── evals.ts           evals.json schema, offline BM25 trigger checker/router, JSON/Promptfoo exporter
 │   ├── feedback.ts        .skanvil-feedback.jsonl parser, deduplication summarizer, and evals.json promoter
+│   ├── telemetry.ts       opt-in v1 telemetry schemas, redaction, offline queue, fetch transport & event builders
+│   ├── telemetry-hooks.ts Claude/Cursor/Gemini stdin hook parser and idempotent settings installer
 │   ├── skills.ts          scaffoldSkill, editSkill (transactional), removeSkill, frontmatter helpers
 │   ├── import.ts          bulk external skill importer with frontmatter normalization and rollback
 │   ├── diff.ts            git read-tree/checkout-index snapshot diff for tokens, params and regressions
@@ -50,6 +53,7 @@ templates/
 └── skill/                 default skill: SKILL.md + assets/, references/, scripts/
 
 tests/                     vitest: unit, core end-to-end, params/build, wizard and real-CLI suites
+hub/                       isolated self-hosted skanvil-hub (Hono + node:sqlite + React/Vite + Docker; excluded from npm)
 scripts/build-schema.mjs   writes schema.json from the zod schema after the build
 docs/                      user guides (docs/assets is not published to npm)
 .github/workflows/         ci.yml (lint, format, typecheck, build, test) and release.yml (release-please PR + npm publish after green CI on main)
@@ -93,6 +97,7 @@ Core functions accept a `Library`, or a root path, and never print.
 - **Offline, LLM-agnostic quality & evals.** Token budgets use a deterministic ~4-chars/token estimator (`src/core/text.ts`) and trigger routing checks/simulations (`eval triggers`, `eval route`) share an embedded zero-dependency Okapi BM25 scorer with non-negative Lucene-style IDF (`src/core/evals.ts`). LLM-graded ablation benchmarks are delegated to external runners via `skanvil eval export --format promptfoo --ablation`, while `skanvil feedback promote` turns `.skanvil-feedback.jsonl` reports directly into `evals.json` regression cases.
 - **Spec-compliant lifecycle metadata & PR diffing.** Ownership (`metadata.owner`), lifecycle state (`metadata.status`), and deprecation pointers (`metadata.replaced-by`) live inside `metadata`. `syncSkills` excludes and prunes `deprecated` skills by default, `buildLibrary` emits `@deprecated` JSDoc tags, and `diffLibrary` extracts read-only base commits with `git read-tree`/`git checkout-index` to measure token deltas and regressions.
 - **Multi-library idempotent sync.** Each target stores a v2 `.skanvil-sync.json` manifest (transparently reading and upgrading v1 manifests) keyed by source path or canonical Git specifier (`github:org/repo[#ref]`, `git+https://...`). Pruning and `--param` state are isolated per library source, collisions with other libraries or foreign folders are skipped cleanly, `alwaysLoadedTokens` sums across every installed skill, and `--link` uses junctions on Windows (automatically falling back to copy for temporary Git clones).
+- **Opt-in self-hosted telemetry (`skanvil-hub`).** Root CLI maintains zero new runtime dependencies by using built-in `fetch`, `node:crypto`, and an offline `~/.skanvil/telemetry-queue.jsonl` buffer, while scrubbing secrets and home paths before transmission. The optional `skanvil-hub` server in `hub/` stays completely isolated from the npm package and runs on built-in `node:sqlite` behind an async `TelemetryStore` interface (`hub/src/server/store/types.ts`).
 - **The tool documents itself for agents.** `agent-skill/skanvil` and `agent-skill/skanvil-feedback` are standard Agent Skills. Tests validate both with skanvil's own default rules, individually and side by side, with zero warnings. Installed copies are stamped with `metadata.skanvil-version`; the stamp marks the folder as owned by skanvil, so it can be updated after upgrades.
 - **Templates are data.** Changing how a skill or a library looks never requires touching `src/`.
 - **Supported Node versions drive dependency choices.** Dependencies are pinned to majors that support Node 20: commander 14, @inquirer/prompts 7 and vitest 3.

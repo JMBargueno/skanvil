@@ -11,6 +11,9 @@ import { z } from "zod";
 /** File name of the library configuration, looked up in the library root. */
 export const CONFIG_FILE = ".skanvilrc.json";
 
+/** Default HTTP timeout (ms) for opt-in telemetry reporting. */
+export const DEFAULT_TELEMETRY_TIMEOUT_MS = 1500;
+
 /** Allowed severities for a validation rule. `off` disables the rule. */
 export const SEVERITIES = ["error", "warn", "off"] as const;
 
@@ -154,7 +157,27 @@ export const ConfigSchema = z
       })
       .strict()
       .optional()
-      .describe("Defaults for `skanvil sync`.")
+      .describe("Defaults for `skanvil sync`."),
+    telemetry: z
+      .object({
+        enabled: z.boolean().optional().describe("Enable opt-in telemetry reporting. Default: false."),
+        endpoint: z
+          .string()
+          .url()
+          .refine((url) => /^https?:\/\//i.test(url), "telemetry.endpoint must use http:// or https://")
+          .optional()
+          .describe("Base URL of your self-hosted skanvil-hub server (for example https://skanvil-hub.internal)."),
+        timeoutMs: z
+          .number()
+          .int()
+          .min(100)
+          .max(30000)
+          .optional()
+          .describe("HTTP timeout in milliseconds for telemetry requests. Default: 1500.")
+      })
+      .strict()
+      .optional()
+      .describe("Opt-in telemetry settings for a self-hosted skanvil-hub instance.")
   })
   .strict()
   .describe("skanvil library configuration.");
@@ -222,6 +245,8 @@ export interface ResolvedConfig {
   templates: { dir: string };
   /** Sync defaults. @defaultValue `{ targets: [], mode: "copy" }` */
   sync: { targets: string[]; mode: "copy" | "link" };
+  /** Opt-in self-hosted telemetry settings. @defaultValue `{ enabled: false, timeoutMs: 1500 }` */
+  telemetry: { enabled: boolean; endpoint?: string; timeoutMs: number };
 }
 
 /**
@@ -411,7 +436,12 @@ export function resolveConfig(raw: unknown = {}): ResolvedConfig {
       rules: config.validation?.rules ?? {}
     },
     templates: { dir: config.templates?.dir ?? ".skanvil/templates" },
-    sync: { targets: config.sync?.targets ?? [], mode: config.sync?.mode ?? "copy" }
+    sync: { targets: config.sync?.targets ?? [], mode: config.sync?.mode ?? "copy" },
+    telemetry: {
+      enabled: config.telemetry?.enabled ?? false,
+      ...(config.telemetry?.endpoint ? { endpoint: config.telemetry.endpoint } : {}),
+      timeoutMs: config.telemetry?.timeoutMs ?? DEFAULT_TELEMETRY_TIMEOUT_MS
+    }
   };
 }
 

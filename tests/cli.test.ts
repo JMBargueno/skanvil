@@ -600,4 +600,77 @@ describe("stats, eval and deprecation CLI", () => {
     expect(diffMd.stdout).toContain("## skanvil diff (HEAD)");
     expect(diffMd.stdout).toContain("`back-events`");
   });
+
+  test("telemetry snapshot, emit, hook, install-hooks and feedback push CLI commands work end-to-end", () => {
+    const dir = tmp();
+    expect(skanvil(["init", "lib", "--no-git", "--no-agent-skill"], dir).code).toBe(0);
+    const root = path.join(dir, "lib");
+    expect(
+      skanvil(
+        [
+          "add",
+          "--type",
+          "front",
+          "--name",
+          "telemetry-check",
+          "--description",
+          "Audits UI metrics cleanly. Use when checking frontend components."
+        ],
+        root
+      ).code
+    ).toBe(0);
+
+    const snapDry = skanvil(["telemetry", "snapshot", "--dry-run", "--json"], root);
+    expect(snapDry.code).toBe(0);
+    expect(json<{ dryRun: boolean; events: { type: string; totals: { skills: number } }[] }>(snapDry)).toMatchObject({
+      dryRun: true,
+      events: [{ type: "library.snapshot", totals: { skills: 1 } }]
+    });
+
+    const emitDry = skanvil(
+      ["telemetry", "emit", "--skill", "front-telemetry-check", "--agent", "claude", "--dry-run", "--json"],
+      root
+    );
+    expect(emitDry.code).toBe(0);
+    expect(json<{ dryRun: boolean; events: { skill: string; agent: string }[] }>(emitDry)).toMatchObject({
+      dryRun: true,
+      events: [{ skill: "front-telemetry-check", agent: "claude" }]
+    });
+
+    const project = tmp();
+    const hooksRun = skanvil(
+      ["telemetry", "install-hooks", project, "--target", "claude,cursor,gemini", "--json"],
+      root
+    );
+    expect(hooksRun.code).toBe(0);
+    expect(
+      json<{ results: { agent: string; status: string }[] }>(hooksRun).results.map((r) => `${r.agent}:${r.status}`)
+    ).toEqual(["claude:installed", "cursor:installed", "gemini:installed"]);
+
+    fs.writeFileSync(
+      path.join(root, ".skanvil-feedback.jsonl"),
+      `${JSON.stringify({ skill: "front-telemetry-check", step: "Step 1", symptom: "Needs extra flag" })}\n`
+    );
+    const fbPushDry = skanvil(["feedback", "push", "--dry-run", "--json"], root);
+    expect(fbPushDry.code).toBe(0);
+    expect(json<{ dryRun: boolean; events: { skill: string }[] }>(fbPushDry)).toMatchObject({
+      dryRun: true,
+      events: [{ skill: "front-telemetry-check" }]
+    });
+
+    const queuePath = path.join(tmp(), "cli-hook-queue.jsonl");
+    const hookRun = spawnSync(process.execPath, [CLI, "telemetry", "hook", "--agent", "claude"], {
+      cwd: root,
+      encoding: "utf8",
+      input: JSON.stringify({
+        tool_name: "Skill",
+        tool_input: { skill: "front-telemetry-check" },
+        cwd: root
+      }),
+      env: { ...process.env, SKANVIL_TELEMETRY_QUEUE: queuePath, SKANVIL_TELEMETRY_URL: "", NO_COLOR: "1" }
+    });
+    expect(hookRun.status).toBe(0);
+    expect(fs.existsSync(queuePath)).toBe(true);
+    expect(fs.readFileSync(queuePath, "utf8")).toContain("front-telemetry-check");
+  });
 });

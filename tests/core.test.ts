@@ -18,6 +18,12 @@ import {
 import { SkillFile } from "../src/core/skill.js";
 import { parseGitSource, resolveTarget } from "../src/core/sync.js";
 import {
+  hashIdentifier,
+  isTelemetryOptedOut,
+  redactTelemetryText,
+  resolveTelemetrySettings
+} from "../src/core/telemetry.js";
+import {
   estimateTokens,
   extractSection,
   jaccardSimilarity,
@@ -353,5 +359,51 @@ describe("sync presets and git source parser", () => {
     expect(parseGitSource("@acme/skills")).toBeNull();
     expect(parseGitSource("--upload-pack=evil")).toBeNull();
     expect(() => parseGitSource("github:acme/skills#--evil")).toThrow(/Invalid Git ref/);
+  });
+});
+
+describe("telemetry config, privacy and redaction", () => {
+  test("resolves telemetry defaults, validates config endpoints and enforces DO_NOT_TRACK", () => {
+    const defaults = resolveConfig({ name: "lib" });
+    expect(defaults.telemetry).toEqual({ enabled: false, timeoutMs: 1500 });
+
+    const configured = resolveConfig({
+      telemetry: { enabled: true, endpoint: "https://hub.internal:4318", timeoutMs: 2500 }
+    });
+    expect(configured.telemetry).toEqual({
+      enabled: true,
+      endpoint: "https://hub.internal:4318",
+      timeoutMs: 2500
+    });
+
+    expect(() => resolveConfig({ telemetry: { endpoint: "file:///tmp/x" } })).toThrow(/http:\/\/ or https:\/\//);
+
+    expect(isTelemetryOptedOut({ DO_NOT_TRACK: "1" })).toBe(true);
+    expect(isTelemetryOptedOut({ SKANVIL_NO_TELEMETRY: "true" })).toBe(true);
+    expect(isTelemetryOptedOut({})).toBe(false);
+
+    const resolved = resolveTelemetrySettings(
+      configured,
+      { endpoint: "http://localhost:4318/" },
+      { SKANVIL_TELEMETRY_KEY: "secret-key", SKANVIL_TELEMETRY_URL: "https://env.example" }
+    );
+    expect(resolved.enabled).toBe(true);
+    expect(resolved.endpoint).toBe("http://localhost:4318");
+    expect(resolved.apiKey).toBe("secret-key");
+  });
+
+  test("hashIdentifier is deterministic and redactTelemetryText scrubs secrets and local paths", () => {
+    expect(hashIdentifier("/work/repo")).toBe(hashIdentifier("  /work/repo  "));
+    expect(hashIdentifier("/work/repo")).toMatch(/^sha256:[0-9a-f]{16}$/);
+
+    const gh = `ghp_${"A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8"}`;
+    const aws = `AKIA${"1234567890ABCDEF"}`;
+    const sanitized = redactTelemetryText(`Read C:\\Users\\Alice\\repo with ${gh} and ${aws} from /Users/bob/src`);
+    expect(sanitized).not.toContain("Alice");
+    expect(sanitized).not.toContain("bob");
+    expect(sanitized).not.toContain(gh);
+    expect(sanitized).not.toContain(aws);
+    expect(sanitized).toContain("<redacted-token>");
+    expect(sanitized).toContain("<redacted-aws-key>");
   });
 });

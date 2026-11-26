@@ -32,6 +32,9 @@ Add the schema reference for completion and inline docs in your editor:
 | `templates.dir`                    | string                                     | `".skanvil/templates"`                                                         | Folder with custom templates, see [Templates](templates.md).                                                                   |
 | `sync.targets`                     | string[]                                   | `[]` (falls back to `claude`)                                                  | Default `skanvil sync` targets (`claude`, `copilot`, `agents`, `codex`, `cursor`, `opencode`, `windsurf`, `gemini`, or paths). |
 | `sync.mode`                        | `"copy"` \| `"link"`                       | `"copy"`                                                                       | Default sync mode.                                                                                                             |
+| `telemetry.enabled`                | boolean                                    | `false`                                                                        | Opt-in telemetry reporting (`sync.applied` emission during `skanvil sync`).                                                    |
+| `telemetry.endpoint`               | string (`http://` \| `https://`)           | —                                                                              | Base URL of your self-hosted `skanvil-hub` server. Overridden by `SKANVIL_TELEMETRY_URL`.                                      |
+| `telemetry.timeoutMs`              | integer (`100`–`30000`)                    | `1500`                                                                         | HTTP request timeout in milliseconds before buffering offline.                                                                 |
 
 The default required sections are `Objective`, `When to Activate This Skill`, `Instructions`, `Error Recovery`, `Output Format` and `Quality Criteria`.
 
@@ -170,3 +173,17 @@ A single category means no prefixes and one README section:
   }
 }
 ```
+
+### Self-hosted telemetry (`skanvil-hub`)
+
+```json
+{
+  "telemetry": {
+    "enabled": true,
+    "endpoint": "https://skanvil-hub.internal",
+    "timeoutMs": 1500
+  }
+}
+```
+
+See [Telemetry and hub](telemetry-and-hub.md) for API key environment variables, `DO_NOT_TRACK`, and coding-agent hooks.

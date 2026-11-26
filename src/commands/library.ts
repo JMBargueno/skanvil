@@ -17,6 +17,13 @@ import { createLibrary } from "../core/init.js";
 import { rebuildIndex } from "../core/reindex.js";
 import { analyzeLibraryStats } from "../core/stats.js";
 import { resolveSourceHandle, syncSkills, type TargetResult } from "../core/sync.js";
+import {
+  buildSyncAppliedEvents,
+  isTelemetryOptedOut,
+  libraryDisplayName,
+  resolveTelemetrySettings,
+  sendTelemetryEvents
+} from "../core/telemetry.js";
 import { Library } from "../core/library.js";
 import { ejectSkillTemplate } from "../core/templates.js";
 import { formatDiagnostic, validateLibrary } from "../core/validate.js";
@@ -364,19 +371,38 @@ export async function syncCommand(dest: string | undefined, options: SyncCommand
 
     if (options.json) {
       console.log(JSON.stringify({ dryRun: Boolean(options.dryRun), mode: effectiveMode, results }, null, 2));
-      return 0;
+    } else {
+      const prefix = options.dryRun ? "(dry run) " : "";
+      const summary = (result: TargetResult) =>
+        `${result.added.length} added, ${result.updated.length} updated, ${result.unchanged.length} unchanged, ${result.removed.length} removed (~${result.alwaysLoadedTokens} always-loaded tokens)`;
+      for (const result of results) {
+        out.info(`${prefix}${result.target} -> ${displayPath(result.path)}: ${summary(result)}`);
+        for (const name of result.added) out.print(`   + ${name}`);
+        for (const name of result.updated) out.print(`   ~ ${name}`);
+        for (const name of result.removed) out.print(`   - ${name}`);
+        for (const entry of result.skipped) out.warn(`   skipped ${entry.skill}: ${entry.reason}`);
+        for (const warning of result.warnings) out.warn(`   ${warning}`);
+      }
     }
 
-    const prefix = options.dryRun ? "(dry run) " : "";
-    const summary = (result: TargetResult) =>
-      `${result.added.length} added, ${result.updated.length} updated, ${result.unchanged.length} unchanged, ${result.removed.length} removed (~${result.alwaysLoadedTokens} always-loaded tokens)`;
-    for (const result of results) {
-      out.info(`${prefix}${result.target} -> ${displayPath(result.path)}: ${summary(result)}`);
-      for (const name of result.added) out.print(`   + ${name}`);
-      for (const name of result.updated) out.print(`   ~ ${name}`);
-      for (const name of result.removed) out.print(`   - ${name}`);
-      for (const entry of result.skipped) out.warn(`   skipped ${entry.skill}: ${entry.reason}`);
-      for (const warning of result.warnings) out.warn(`   ${warning}`);
+    if (!options.dryRun && !isTelemetryOptedOut()) {
+      const telemetry = resolveTelemetrySettings(library.config);
+      if (telemetry.enabled && telemetry.endpoint) {
+        try {
+          const libName = library.config.name
+            ? libraryDisplayName(library)
+            : handle.sourceLabel || libraryDisplayName(library);
+          const syncEvents = buildSyncAppliedEvents(library, results, {
+            dest: destination,
+            mode: effectiveMode,
+            scope: options.global ? "user" : "project",
+            libraryName: libName
+          });
+          await sendTelemetryEvents(syncEvents, telemetry, { queueOnFailure: true });
+        } catch {
+          // Opt-in telemetry must never break `skanvil sync`.
+        }
+      }
     }
     return 0;
   } finally {

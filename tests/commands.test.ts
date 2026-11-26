@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -25,6 +26,16 @@ import { rebuildIndex, reconcileIndex } from "../src/core/reindex.js";
 import { editSkill, removeSkill, scaffoldSkill } from "../src/core/skills.js";
 import { analyzeLibraryStats } from "../src/core/stats.js";
 import { MANIFEST_FILE, resolveSourceHandle, resolveTarget, syncSkills, type ManifestV2 } from "../src/core/sync.js";
+import {
+  buildFeedbackEvents,
+  buildLibrarySnapshotEvent,
+  buildSkillInvokedEvent,
+  flushTelemetryQueue,
+  resolveTelemetrySettings,
+  sendTelemetryEvents,
+  type TelemetryEvent
+} from "../src/core/telemetry.js";
+import { installTelemetryHooks, parseAgentHookPayload } from "../src/core/telemetry-hooks.js";
 import { ejectSkillTemplate } from "../src/core/templates.js";
 import { packageVersion } from "../src/util/paths.js";
 import { findBrokenReferences, validateLibrary } from "../src/core/validate.js";
@@ -1684,5 +1695,169 @@ describe("importSkills and diffLibrary", () => {
     expect(md).toContain("`front-a11y`");
     expect(md).toContain("### New Validation Diagnostics");
     expect(md).toContain("### Trigger Routing Regressions");
+  });
+});
+
+describe("telemetry client, offline queue, and agent hooks", () => {
+  test("snapshots, feedback redaction, HTTP batch ingestion, and offline queue flush work end-to-end", async () => {
+    const root = await makeLibrary({ name: "hub-demo", scope: "acme", agentSkill: false });
+    await scaffoldSkill(root, {
+      type: "front",
+      name: "forms",
+      description: "Audits form validation cleanly. Use when editing React forms."
+    });
+    fs.writeFileSync(
+      path.join(root, FEEDBACK_FILE),
+      `${JSON.stringify({
+        timestamp: "2026-11-25T10:00:00Z",
+        skill: "front-forms",
+        step: "Step 2",
+        symptom: "Fails inside /Users/jdoe/app with ghp_" + "A1b2C3d4E5f6G7h8I9j0K1l2M3n4O5p6Q7r8",
+        suggestedEvalCase: { id: "form-check", prompt: "Check form", expected: ["Validates errors"] }
+      })}\n`
+    );
+
+    const lib = await Library.open(root);
+    const snapshot = await buildLibrarySnapshotEvent(lib);
+    expect(snapshot.library).toBe("@acme/hub-demo");
+    expect(snapshot.totals.skills).toBe(1);
+    expect(snapshot.skills[0]).toMatchObject({ name: "front-forms", category: "front", valid: true });
+
+    const { events: feedbackEvents } = await buildFeedbackEvents(lib);
+    expect(feedbackEvents).toHaveLength(1);
+    expect(feedbackEvents[0].symptom).not.toContain("jdoe");
+    expect(feedbackEvents[0].symptom).toContain("<redacted-token>");
+
+    const queueFile = path.join(tmp(), "queue.jsonl");
+    // Unreachable port queues events cleanly.
+    const offlineSettings = resolveTelemetrySettings(lib.config, {
+      endpoint: "http://127.0.0.1:1",
+      apiKey: "test-ingest-key",
+      queueFile,
+      timeoutMs: 400
+    });
+    const failedSend = await sendTelemetryEvents([snapshot, ...feedbackEvents], offlineSettings);
+    expect(failedSend.sent).toBe(0);
+    expect(failedSend.queued).toBe(2);
+    expect(fs.existsSync(queueFile)).toBe(true);
+
+    // Start local HTTP receiver and verify queue flush + Bearer header.
+    const received: TelemetryEvent[] = [];
+    let authHeader = "";
+    const server = http.createServer((req, res) => {
+      authHeader = req.headers.authorization ?? "";
+      const chunks: Buffer[] = [];
+      req.on("data", (chunk) => chunks.push(chunk));
+      req.on("end", () => {
+        const body = JSON.parse(Buffer.concat(chunks).toString("utf8")) as { events: TelemetryEvent[] };
+        received.push(...body.events);
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({ ok: true, accepted: body.events.length, duplicates: 0 }));
+      });
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", () => resolve()));
+    try {
+      const addr = server.address() as { port: number };
+      const onlineSettings = resolveTelemetrySettings(lib.config, {
+        endpoint: `http://127.0.0.1:${addr.port}`,
+        apiKey: "test-ingest-key",
+        queueFile
+      });
+      const flushed = await flushTelemetryQueue(onlineSettings);
+      expect(flushed).toMatchObject({ sent: 2, queued: 0, remaining: 0 });
+      expect(authHeader).toBe("Bearer test-ingest-key");
+      expect(received.map((e) => e.type)).toEqual(["library.snapshot", "skill.feedback"]);
+      expect(fs.existsSync(queueFile)).toBe(false);
+
+      const invoked = buildSkillInvokedEvent({
+        skill: "front-forms",
+        library: "@acme/hub-demo",
+        agent: "claude",
+        model: "claude-sonnet",
+        projectPath: root,
+        durationMs: 1200,
+        toolCalls: 4
+      });
+      const direct = await sendTelemetryEvents([invoked], onlineSettings);
+      expect(direct.sent).toBe(1);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+  });
+
+  test("parseAgentHookPayload detects synced skills and installTelemetryHooks merges configs idempotently", async () => {
+    const libRoot = await makeLibrary({ name: "team-skills", scope: "acme", agentSkill: false });
+    await scaffoldSkill(libRoot, {
+      type: "front",
+      name: "table",
+      description: "Reviews data tables cleanly. Use when building grids."
+    });
+    const project = tmp();
+    await syncSkills(await Library.open(libRoot), { dest: project, targets: ["claude", "cursor", "gemini"] });
+
+    // Non-skill file reads return null immediately.
+    const ignored = await parseAgentHookPayload(
+      "claude",
+      JSON.stringify({ tool_name: "Read", tool_input: { file_path: path.join(project, "src", "app.ts") } }),
+      project
+    );
+    expect(ignored).toBeNull();
+
+    const claudeFile = path.join(project, ".claude", "skills", "front-table", "SKILL.md");
+    const claudeSignal = await parseAgentHookPayload(
+      "claude",
+      JSON.stringify({
+        session_id: "sess-1",
+        cwd: project,
+        tool_name: "Read",
+        tool_input: { file_path: claudeFile }
+      })
+    );
+    expect(claudeSignal).toMatchObject({
+      agent: "claude",
+      skill: "front-table",
+      library: "my-lib",
+      outcome: "success"
+    });
+    expect(claudeSignal?.stage1Tokens).toBeGreaterThan(5);
+
+    const cursorSignal = await parseAgentHookPayload(
+      "cursor",
+      JSON.stringify({
+        conversation_id: "conv-1",
+        workspace_roots: [project],
+        file_path: path.join(project, ".cursor", "skills", "front-table", "SKILL.md")
+      })
+    );
+    expect(cursorSignal).toMatchObject({ agent: "cursor", skill: "front-table" });
+
+    const geminiSignal = await parseAgentHookPayload(
+      "gemini",
+      JSON.stringify({
+        session_id: "gem-1",
+        cwd: project,
+        tool_name: "activate_skill",
+        tool_input: { name: "front-table" }
+      })
+    );
+    expect(geminiSignal).toMatchObject({ agent: "gemini", skill: "front-table" });
+
+    // Preserve pre-existing settings and ensure idempotency on repeat runs.
+    fs.writeFileSync(
+      path.join(project, ".claude", "settings.json"),
+      JSON.stringify({ permissions: { allow: ["Bash(npm test:*)"] } })
+    );
+    const first = await installTelemetryHooks({ dest: project, targets: ["claude", "cursor", "gemini"] });
+    expect(first.results.every((item) => item.status === "installed")).toBe(true);
+
+    const claudeCfg = JSON.parse(fs.readFileSync(path.join(project, ".claude", "settings.json"), "utf8"));
+    expect(claudeCfg.permissions.allow).toEqual(["Bash(npm test:*)"]);
+    expect(claudeCfg.hooks.PostToolUse).toHaveLength(1);
+    expect(fs.existsSync(path.join(project, ".cursor", "hooks.json"))).toBe(true);
+    expect(fs.existsSync(path.join(project, ".gemini", "settings.json"))).toBe(true);
+
+    const second = await installTelemetryHooks({ dest: project, targets: ["claude", "cursor", "gemini"] });
+    expect(second.results.every((item) => item.status === "already-configured")).toBe(true);
   });
 });

@@ -30,7 +30,7 @@ Capture concrete execution friction from Agent Skill sessions in `.skanvil-feedb
    - `proposedFix`: concrete change to `SKILL.md` or its resources
    - `suggestedEvalCase`: object with `id`, `prompt`, and `expected` suitable for `evals.json`
 4. Verify the appended line is valid JSON by running `node -e "const fs = require('fs'); const lines = fs.readFileSync('.skanvil-feedback.jsonl', 'utf8').trim().split(/\r?\n/); JSON.parse(lines[lines.length - 1]); console.log('Entries:', lines.length);"` and confirming it exits `0`.
-5. If the user asks to promote reports inside a skills library repository, suggest or run `npx skanvil feedback list` and `npx skanvil feedback promote --prune` so validated `suggestedEvalCase` items move straight into `evals.json`. If escalating upstream via `.skanvil-sync.json`, prepare a concise summary from the JSONL entry without modifying unrelated project files.
+5. If the user asks to promote reports inside a skills library repository, suggest or run `npx skanvil feedback list` and `npx skanvil feedback promote --prune` so validated `suggestedEvalCase` items move straight into `evals.json`. When a team configures a self-hosted `skanvil-hub` server, upload sanitized entries with `npx skanvil feedback push`. If escalating upstream via `.skanvil-sync.json`, prepare a concise summary from the JSONL entry without modifying unrelated project files.
 
 ## Error Recovery
 

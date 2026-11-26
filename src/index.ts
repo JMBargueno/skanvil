@@ -37,6 +37,7 @@ export {
   DEFAULT_CATEGORIES,
   DEFAULT_MAX_DESCRIPTION_TOKENS,
   DEFAULT_OVERLAP_THRESHOLD,
+  DEFAULT_TELEMETRY_TIMEOUT_MS,
   DEFAULT_VAGUE_FALLBACKS,
   SKILL_STATUSES,
   configJsonSchema,
@@ -150,6 +151,50 @@ export {
   type TargetResult,
   type TargetScope
 } from "./core/sync.js";
+export {
+  TELEMETRY_SCHEMA_VERSION,
+  LibrarySnapshotEventSchema,
+  SkillFeedbackEventSchema,
+  SkillInvokedEventSchema,
+  SnapshotSkillSchema,
+  SyncAppliedEventSchema,
+  TelemetryBatchSchema,
+  TelemetryEventSchema,
+  buildFeedbackEvents,
+  buildLibrarySnapshotEvent,
+  buildSkillInvokedEvent,
+  buildSyncAppliedEvents,
+  defaultTelemetryQueuePath,
+  enqueueTelemetryEvents,
+  flushTelemetryQueue,
+  hashIdentifier,
+  isTelemetryOptedOut,
+  libraryDisplayName,
+  redactTelemetryText,
+  resolveTelemetrySettings,
+  sendTelemetryEvents,
+  type BuildSkillInvokedOptions,
+  type LibrarySnapshotEvent,
+  type ResolvedTelemetrySettings,
+  type SkillFeedbackEvent,
+  type SkillInvokedEvent,
+  type SnapshotBuildOptions,
+  type SyncAppliedEvent,
+  type TelemetryEvent,
+  type TelemetryFlushResult,
+  type TelemetrySendResult,
+  type TelemetrySettingsOverrides
+} from "./core/telemetry.js";
+export {
+  HOOK_AGENTS,
+  installTelemetryHooks,
+  parseAgentHookPayload,
+  type HookInstallItem,
+  type HookInstallTarget,
+  type InstallHooksOptions,
+  type InstallHooksResult,
+  type ParsedHookSignal
+} from "./core/telemetry-hooks.js";
 export { ejectSkillTemplate, resolveSkillTemplate } from "./core/templates.js";
 export {
   estimateTokens,
