@@ -159,6 +159,29 @@ skill.setTitle("Front X");
 await fs.writeFile(file, skill.toString()); // comments, quoting and CRLF are preserved
 ```
 
+## Telemetry and agent hooks
+
+```ts
+import {
+  Library,
+  buildLibrarySnapshotEvent,
+  resolveTelemetrySettings,
+  sendTelemetryEvents,
+  installTelemetryHooks
+} from "skanvil";
+
+const lib = await Library.open("./my-skills");
+const settings = resolveTelemetrySettings(lib.config);
+const snapshot = await buildLibrarySnapshotEvent(lib);
+await sendTelemetryEvents([snapshot], settings);
+
+await installTelemetryHooks({
+  targets: ["claude", "cursor", "gemini"],
+  dest: "../my-app",
+  scope: "project"
+});
+```
+
 ## Configuration helpers
 
 ```ts
@@ -171,24 +194,29 @@ const schema = configJsonSchema(); // same as skanvil/schema.json
 
 ## Export overview
 
-| Export                                                                                                                     | Kind               | Purpose                                                   |
-| -------------------------------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------- |
-| `Library`                                                                                                                  | class              | Open a library; paths, skills and README I/O.             |
-| `Categories`                                                                                                               | class              | Category lookup, prefix inference, name building.         |
-| `SkillFile`                                                                                                                | class              | Parse and edit a `SKILL.md` without losing formatting.    |
-| `createLibrary`, `parseProfile`                                                                                            | functions          | `skanvil init`.                                           |
-| `scaffoldSkill`, `editSkill`, `removeSkill`, `importSkills`                                                                | functions          | `skanvil add` / `edit` / `import`.                        |
-| `collectSkills`                                                                                                            | function           | `skanvil list` rows (with category/status/owner filters). |
-| `validateLibrary`, `formatDiagnostic`, `formatGitHubAnnotations`, `formatSarif`, `resolveDiagnosticFile`, `RULES`          | functions / const  | `skanvil validate` and CI formatters.                     |
-| `findBrokenReferences`, `findUnusedResources`                                                                              | functions          | Path and Stage-3 resource checks.                         |
-| `analyzeLibraryStats`, `estimateTokens`                                                                                    | functions          | `skanvil stats` and Stage-1 token estimation.             |
-| `parseEvals`, `readEvals`, `checkTriggerRouting`, `routePrompt`, `exportEvalDataset`, `EvalsFileSchema`, `EVALS_FILE`      | functions / consts | `skanvil eval triggers`, `route` and `export`.            |
-| `readFeedbackLog`, `summarizeFeedback`, `promoteFeedback`, `FEEDBACK_FILE`                                                 | functions / const  | `.skanvil-feedback.jsonl` reader and promotion.           |
-| `diffLibrary`, `formatDiffMarkdown`                                                                                        | functions          | `skanvil diff` Git snapshot comparison and PR Markdown.   |
-| `rebuildIndex`, `reconcileIndex`, `doctor`                                                                                 | functions          | `skanvil index` / `doctor` (`DoctorOptions`).             |
-| `resolveSkillTemplate`, `ejectSkillTemplate`                                                                               | functions          | Templates.                                                |
-| `syncSkills`, `resolveTarget`, `resolveSource`, `resolveSourceHandle`, `parseGitSource`, `TARGET_PRESETS`, `MANIFEST_FILE` | functions / consts | Multi-library Manifest v2 sync and Git `--from`.          |
-| `buildLibrary`, `exportNames`                                                                                              | functions          | `skanvil build` typed npm exports.                        |
-| `installAgentSkill`, `agentSkillSource`, `feedbackSkillSource`, `AGENT_SKILL_NAME`, `FEEDBACK_SKILL_NAME`                  | functions / consts | `skanvil install-skill`.                                  |
-| `estimateTokens`, `extractSection`, `stripFencedCode`, `tokenizeForSimilarity`, `jaccardSimilarity`                        | functions          | Text, section and lexical similarity helpers.             |
-| `resolveConfig`, `loadConfig`, `ConfigSchema`, `configJsonSchema`, `DEFAULT_CATEGORIES`, `SKILL_STATUSES`, `CONFIG_FILE`   | functions / consts | Configuration and lifecycle constants.                    |
+| Export                                                                                                                                                   | Kind               | Purpose                                                   |
+| -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ | --------------------------------------------------------- |
+| `Library`                                                                                                                                                | class              | Open a library; paths, skills and README I/O.             |
+| `Categories`                                                                                                                                             | class              | Category lookup, prefix inference, name building.         |
+| `SkillFile`                                                                                                                                              | class              | Parse and edit a `SKILL.md` without losing formatting.    |
+| `createLibrary`, `parseProfile`                                                                                                                          | functions          | `skanvil init`.                                           |
+| `scaffoldSkill`, `editSkill`, `removeSkill`, `importSkills`                                                                                              | functions          | `skanvil add` / `edit` / `import`.                        |
+| `collectSkills`                                                                                                                                          | function           | `skanvil list` rows (with category/status/owner filters). |
+| `validateLibrary`, `formatDiagnostic`, `formatGitHubAnnotations`, `formatSarif`, `resolveDiagnosticFile`, `RULES`                                        | functions / const  | `skanvil validate` and CI formatters.                     |
+| `findBrokenReferences`, `findUnusedResources`                                                                                                            | functions          | Path and Stage-3 resource checks.                         |
+| `analyzeLibraryStats`, `estimateTokens`                                                                                                                  | functions          | `skanvil stats` and Stage-1 token estimation.             |
+| `parseEvals`, `readEvals`, `checkTriggerRouting`, `routePrompt`, `exportEvalDataset`, `EvalsFileSchema`, `EVALS_FILE`                                    | functions / consts | `skanvil eval triggers`, `route` and `export`.            |
+| `readFeedbackLog`, `summarizeFeedback`, `promoteFeedback`, `FEEDBACK_FILE`                                                                               | functions / const  | `.skanvil-feedback.jsonl` reader and promotion.           |
+| `diffLibrary`, `formatDiffMarkdown`                                                                                                                      | functions          | `skanvil diff` Git snapshot comparison and PR Markdown.   |
+| `rebuildIndex`, `reconcileIndex`, `doctor`                                                                                                               | functions          | `skanvil index` / `doctor` (`DoctorOptions`).             |
+| `resolveSkillTemplate`, `ejectSkillTemplate`                                                                                                             | functions          | Templates.                                                |
+| `syncSkills`, `resolveTarget`, `resolveSource`, `resolveSourceHandle`, `parseGitSource`, `TARGET_PRESETS`, `MANIFEST_FILE`                               | functions / consts | Multi-library Manifest v2 sync and Git `--from`.          |
+| `buildLibrary`, `exportNames`                                                                                                                            | functions          | `skanvil build` typed npm exports.                        |
+| `installAgentSkill`, `agentSkillSource`, `feedbackSkillSource`, `AGENT_SKILL_NAME`, `FEEDBACK_SKILL_NAME`                                                | functions / consts | `skanvil install-skill`.                                  |
+| `buildLibrarySnapshotEvent`, `buildSyncAppliedEvents`, `buildSkillInvokedEvent`, `buildFeedbackEvents`                                                   | functions          | Build validated `schemaVersion: 1` telemetry events.      |
+| `sendTelemetryEvents`, `flushTelemetryQueue`, `enqueueTelemetryEvents`, `resolveTelemetrySettings`                                                       | functions          | Opt-in `fetch` delivery and offline JSONL retry queue.    |
+| `isTelemetryOptedOut`, `hashIdentifier`, `redactTelemetryText`, `libraryDisplayName`, `defaultTelemetryQueuePath`                                        | functions          | Privacy opt-out checks, SHA-256 hashing and redaction.    |
+| `installTelemetryHooks`, `parseAgentHookPayload`, `HOOK_AGENTS`                                                                                          | functions / const  | `claude`, `cursor` and `gemini` hook installation/parser. |
+| `TELEMETRY_SCHEMA_VERSION`, `TelemetryEventSchema`, `TelemetryBatchSchema`                                                                               | const / schemas    | Runtime Zod schemas for v1 telemetry payloads.            |
+| `estimateTokens`, `extractSection`, `stripFencedCode`, `tokenizeForSimilarity`, `jaccardSimilarity`                                                      | functions          | Text, section and lexical similarity helpers.             |
+| `resolveConfig`, `loadConfig`, `ConfigSchema`, `configJsonSchema`, `DEFAULT_CATEGORIES`, `SKILL_STATUSES`, `CONFIG_FILE`, `DEFAULT_TELEMETRY_TIMEOUT_MS` | functions / consts | Configuration, telemetry timeout and lifecycle constants. |

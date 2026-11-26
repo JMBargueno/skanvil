@@ -19,6 +19,7 @@ skanvil is a CLI and Node.js library for teams that maintain a shared set of age
 - **Installs** publishable (non-deprecated) skills across multiple coexisting libraries (`.claude/skills`, `.github/skills`, `.agents/skills`, `.cursor/skills`, `.opencode/skills`, `.windsurf/skills`, `.gemini/skills`) from local folders, npm packages, or Git URLs (`github:org/repo[#ref]`), reporting combined `alwaysLoadedTokens` per target.
 - **Adapts and exports skills.** Optional parameters (`{{ticketTracker}}`, `{{#if …}}`) make one skill fit every team, and `skanvil build` turns the library into a typed npm package (`import { codeReview } from "@acme/skills"` with `@deprecated` JSDoc where marked).
 - **Teaches agents and captures friction.** skanvil ships `skanvil` (CLI usage) and `skanvil-feedback` (structured `.skanvil-feedback.jsonl` friction reports), so coding agents maintain your library correctly and surface stale instructions.
+- **Tracks adoption & usage self-hosted (optional).** Send opt-in snapshots, sync events, friction reports, and non-blocking coding-agent hooks (`claude`, `cursor`, `gemini`) to `skanvil-hub` (under [`hub/`](hub/)) to monitor Stage-1 token growth, zombie skills, friction rates, and deprecated skills still installed.
 
 ## What is a skills library?
 
@@ -109,28 +110,34 @@ npx skanvil sync -C ./my-skills --global --target claude,copilot
 
 ## Commands
 
-| Command                        | What it does                                                                                  |
-| ------------------------------ | --------------------------------------------------------------------------------------------- |
-| `skanvil` / `skanvil wizard`   | Interactive assistant (in a terminal; without one, `skanvil` prints the help).                |
-| `skanvil init [dir]`           | Create a new library.                                                                         |
-| `skanvil add`                  | Create a skill from a template and index it (interactive if options are missing).             |
-| `skanvil import <sourceDir>`   | Bulk-import existing skill folders, normalise frontmatter, and index them.                    |
-| `skanvil edit <skill>`         | Rename, re-categorise, retitle, redescribe, set owner/status or remove a skill.               |
-| `skanvil list`                 | Table of skills with category, README presence, validity, lifecycle status and summary.       |
-| `skanvil validate`             | Check the spec, security rules, quality rules, evals and conventions (`--format` for CI).     |
-| `skanvil diff [baseRef]`       | Compare the working library against a Git ref (Stage-1 token delta, validation, regressions). |
-| `skanvil index`                | Regenerate the README index (`--check` for CI).                                               |
-| `skanvil doctor`               | Diagnose problems; `--fix` repairs what it can (`--scaffold-sections` stubs missing headers). |
-| `skanvil stats`                | Report 3-stage token and line budgets (`name` + `description`, body, resources).              |
-| `skanvil eval route "<p>"`     | Simulate Stage-1 offline BM25 trigger routing for a user prompt.                              |
-| `skanvil eval triggers`        | Check `evals.json` trigger prompts offline against all descriptions for routing collisions.   |
-| `skanvil eval export`          | Export `evals.json` cases and triggers as JSON or Promptfoo configs (`--ablation`).           |
-| `skanvil feedback list`        | Summarise and deduplicate friction reports recorded in `.skanvil-feedback.jsonl`.             |
-| `skanvil feedback promote`     | Promote validated `suggestedEvalCase` entries into skill `evals.json` suites (`--prune`).     |
-| `skanvil templates eject`      | Copy the skill template into the library to customise it.                                     |
-| `skanvil sync [dest]`          | Install publishable skills from local, npm, or Git sources across coexisting libraries.       |
-| `skanvil install-skill [dest]` | Install or update the `skanvil` and `skanvil-feedback` agent skills in a project.             |
-| `skanvil build`                | Generate the library's typed npm exports, one function per skill.                             |
+| Command                           | What it does                                                                                  |
+| --------------------------------- | --------------------------------------------------------------------------------------------- |
+| `skanvil` / `skanvil wizard`      | Interactive assistant (in a terminal; without one, `skanvil` prints the help).                |
+| `skanvil init [dir]`              | Create a new library.                                                                         |
+| `skanvil add`                     | Create a skill from a template and index it (interactive if options are missing).             |
+| `skanvil import <sourceDir>`      | Bulk-import existing skill folders, normalise frontmatter, and index them.                    |
+| `skanvil edit <skill>`            | Rename, re-categorise, retitle, redescribe, set owner/status or remove a skill.               |
+| `skanvil list`                    | Table of skills with category, README presence, validity, lifecycle status and summary.       |
+| `skanvil validate`                | Check the spec, security rules, quality rules, evals and conventions (`--format` for CI).     |
+| `skanvil diff [baseRef]`          | Compare the working library against a Git ref (Stage-1 token delta, validation, regressions). |
+| `skanvil index`                   | Regenerate the README index (`--check` for CI).                                               |
+| `skanvil doctor`                  | Diagnose problems; `--fix` repairs what it can (`--scaffold-sections` stubs missing headers). |
+| `skanvil stats`                   | Report 3-stage token and line budgets (`name` + `description`, body, resources).              |
+| `skanvil eval route "<p>"`        | Simulate Stage-1 offline BM25 trigger routing for a user prompt.                              |
+| `skanvil eval triggers`           | Check `evals.json` trigger prompts offline against all descriptions for routing collisions.   |
+| `skanvil eval export`             | Export `evals.json` cases and triggers as JSON or Promptfoo configs (`--ablation`).           |
+| `skanvil feedback list`           | Summarise and deduplicate friction reports recorded in `.skanvil-feedback.jsonl`.             |
+| `skanvil feedback promote`        | Promote validated `suggestedEvalCase` entries into skill `evals.json` suites (`--prune`).     |
+| `skanvil feedback push`           | Upload sanitized `.skanvil-feedback.jsonl` friction reports to a self-hosted `skanvil-hub`.   |
+| `skanvil telemetry snapshot`      | Send library token budgets, validation counts, and eval pass rates to `skanvil-hub`.          |
+| `skanvil telemetry emit`          | Emit a `skill.invoked` usage event manually or from automation workflows.                     |
+| `skanvil telemetry hook`          | Non-blocking agent hook handler reading stdin JSON (`claude`, `cursor`, `gemini`).            |
+| `skanvil telemetry push`          | Flush queued offline telemetry events from `~/.skanvil/telemetry-queue.jsonl`.                |
+| `skanvil telemetry install-hooks` | Install non-blocking usage hooks into `claude`, `cursor`, or `gemini` settings.               |
+| `skanvil templates eject`         | Copy the skill template into the library to customise it.                                     |
+| `skanvil sync [dest]`             | Install publishable skills from local, npm, or Git sources across coexisting libraries.       |
+| `skanvil install-skill [dest]`    | Install or update the `skanvil` and `skanvil-feedback` agent skills in a project.             |
+| `skanvil build`                   | Generate the library's typed npm exports, one function per skill.                             |
 
 Every command accepts `--json`, and every command that works on a library accepts `-C, --cwd <path>`. The [command reference](docs/commands.md) lists every option.
 
@@ -164,6 +171,7 @@ Installed copies are stamped with the skanvil version, so running the command ag
 | [Configuration](docs/configuration.md)               | `.skanvilrc.json` reference: categories, validation, templates, sync.                 |
 | [Validation rules](docs/validation.md)               | Every rule, its severity and how to tune it. CI recipes.                              |
 | [Evals and quality](docs/evals-and-quality.md)       | Token budgets, skill code-smell rules, `evals.json`, ablation export and feedback.    |
+| [Telemetry and hub](docs/telemetry-and-hub.md)       | Opt-in CLI telemetry, agent hooks, and self-hosted `skanvil-hub` dashboard (`hub/`).  |
 | [Templates](docs/templates.md)                       | Customising the skill template per library or category.                               |
 | [Parameters and exports](docs/params-and-exports.md) | Parametrized skills, `sync --param`, and `import { codeReview } from "@acme/skills"`. |
 | [Sync](docs/sync.md)                                 | Installing skills into Claude Code, GitHub Copilot and Codex projects.                |

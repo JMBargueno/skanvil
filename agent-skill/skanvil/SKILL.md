@@ -120,6 +120,17 @@ Presets: `claude` (`.claude/skills`), `copilot` (`.github/skills`), `agents` / `
 
 **Parametrize and export skills.** Add `params.json` with `enum` / `string` / `boolean` definitions (each with a `default`), use `{{name}}` and `{{#if ...}}` in `SKILL.md`, validate with `npx skanvil validate`, install with `sync --param key=value`, or run `npx skanvil build` for typed npm exports.
 
+**Publish opt-in telemetry to self-hosted `skanvil-hub`.**
+
+```bash
+npx skanvil telemetry snapshot                                    # upload budgets, validation and evals
+npx skanvil telemetry install-hooks --target claude,cursor,gemini # non-blocking agent usage hooks
+npx skanvil feedback push                                         # upload redacted friction reports
+npx skanvil telemetry push                                        # flush queued offline telemetry events
+```
+
+Configure `telemetry.endpoint` in `.skanvilrc.json` or `SKANVIL_TELEMETRY_URL` (`SKANVIL_TELEMETRY_KEY` for Bearer ingestion keys). Network errors buffer into the local offline queue without blocking coding agents, and `DO_NOT_TRACK=1` disables all telemetry immediately.
+
 ### 4. Write good skill content
 
 - **`description` (Stage 1, always loaded):** Keep `name` + `description` within ~120 estimated tokens (`description-budget`). State _what_ it does, _when_ to activate it, and what to exclude (`description-triggers`), while keeping distinct keywords from sibling skills (`description-overlap`).

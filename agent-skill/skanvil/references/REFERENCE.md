@@ -4,27 +4,33 @@
 
 Every command accepts `-C, --cwd <path>` (library root) and `--json` (except `eval export`, which prints JSON directly). Exit code `0` means success; `1` means an error or failed check.
 
-| Command                | Options                                                                                                                                                                                         |
-| ---------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `init [dir]`           | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--no-feedback`, `--target <preset\|path>`                       |
-| `add`                  | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                             |
-| `import <sourceDir>`   | `--type <category>`, `--skill <name>`, `--dry-run`, `--overwrite`, `--skip-validate`                                                                                                            |
-| `edit <skill>`         | `--rename`, `--type`, `--title`, `--description`, `--owner`, `--status <draft\|experimental\|active\|deprecated>`, `--replaced-by <skill>`, `--remove`, `--yes`, `--skip-validate`              |
-| `list`                 | `--category <id>`, `--status <value>`, `--owner <value>`                                                                                                                                        |
-| `validate`             | `--strict`, `--skill <name>`, `--format <text\|github\|sarif\|json>`                                                                                                                            |
-| `diff [baseRef]`       | `--format <text\|markdown>`                                                                                                                                                                     |
-| `index`                | `--check`                                                                                                                                                                                       |
-| `doctor`               | `--fix`, `--scaffold-sections`                                                                                                                                                                  |
-| `stats`                | `--category <id>`, `--skill <name>`, `--sort <tokens\|lines\|name>`                                                                                                                             |
-| `eval route "<p>"`     | `--top <n>`                                                                                                                                                                                     |
-| `eval triggers`        | `--skill <name>`, `--split <train\|eval>`, `--strict`                                                                                                                                           |
-| `eval export`          | `--format <json\|promptfoo>`, `--ablation`, `--skill <name>`, `--split <train\|eval>`, `--out <file>`                                                                                           |
-| `feedback list`        | `--file <path>`, `--skill <name>`                                                                                                                                                               |
-| `feedback promote`     | `--file <path>`, `--skill <name>`, `--dry-run`, `--prune`                                                                                                                                       |
-| `templates eject`      | `--category <id>`, `--force`                                                                                                                                                                    |
-| `sync [dest]`          | `--target <preset\|path>`, `--from <pkg\|path\|git>`, `--link`, `--copy`, `--category`, `--skill`, `--status`, `--include-deprecated`, `--force`, `--dry-run`, `--global`, `--param name=value` |
-| `build`                | `--out <dir>`, `--force`                                                                                                                                                                        |
-| `install-skill [dest]` | `--target <preset\|path>`, `--force`, `--global`, `--no-feedback`                                                                                                                               |
+| Command                          | Options                                                                                                                                                                                         |
+| -------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `init [dir]`                     | `--name`, `--scope`, `--description`, `--profile front,back,transversal`, `--no-git`, `--eject-templates`, `--no-agent-skill`, `--no-feedback`, `--target <preset\|path>`                       |
+| `add`                            | `--type <category>`, `--name`, `--title`, `--description`, `--template <name>`, `--no-assets`, `--no-references`, `--no-scripts`, `--skip-validate`                                             |
+| `import <sourceDir>`             | `--type <category>`, `--skill <name>`, `--dry-run`, `--overwrite`, `--skip-validate`                                                                                                            |
+| `edit <skill>`                   | `--rename`, `--type`, `--title`, `--description`, `--owner`, `--status <draft\|experimental\|active\|deprecated>`, `--replaced-by <skill>`, `--remove`, `--yes`, `--skip-validate`              |
+| `list`                           | `--category <id>`, `--status <value>`, `--owner <value>`                                                                                                                                        |
+| `validate`                       | `--strict`, `--skill <name>`, `--format <text\|github\|sarif\|json>`                                                                                                                            |
+| `diff [baseRef]`                 | `--format <text\|markdown>`                                                                                                                                                                     |
+| `index`                          | `--check`                                                                                                                                                                                       |
+| `doctor`                         | `--fix`, `--scaffold-sections`                                                                                                                                                                  |
+| `stats`                          | `--category <id>`, `--skill <name>`, `--sort <tokens\|lines\|name>`                                                                                                                             |
+| `eval route "<p>"`               | `--top <n>`                                                                                                                                                                                     |
+| `eval triggers`                  | `--skill <name>`, `--split <train\|eval>`, `--strict`                                                                                                                                           |
+| `eval export`                    | `--format <json\|promptfoo>`, `--ablation`, `--skill <name>`, `--split <train\|eval>`, `--out <file>`                                                                                           |
+| `feedback list`                  | `--file <path>`, `--skill <name>`                                                                                                                                                               |
+| `feedback promote`               | `--file <path>`, `--skill <name>`, `--dry-run`, `--prune`                                                                                                                                       |
+| `feedback push`                  | `--file <path>`, `--skill <name>`, `--endpoint <url>`, `--api-key <key>`, `--dry-run`, `--no-queue`                                                                                             |
+| `telemetry snapshot`             | `--endpoint <url>`, `--api-key <key>`, `--dry-run`, `--no-queue`                                                                                                                                |
+| `telemetry emit`                 | `--skill <name>`, `--library`, `--agent`, `--model`, `--outcome`, `--duration-ms`, `--tool-calls`, `--failed-tool-calls`, `--endpoint`, `--api-key`, `--dry-run`, `--no-queue`                  |
+| `telemetry hook`                 | `--agent <claude\|cursor\|gemini>`, `--endpoint <url>`, `--api-key <key>`                                                                                                                       |
+| `telemetry push`                 | `--endpoint <url>`, `--api-key <key>`, `--dry-run`                                                                                                                                              |
+| `telemetry install-hooks [dest]` | `--target <claude\|cursor\|gemini>`, `--global`, `--dry-run`                                                                                                                                    |
+| `templates eject`                | `--category <id>`, `--force`                                                                                                                                                                    |
+| `sync [dest]`                    | `--target <preset\|path>`, `--from <pkg\|path\|git>`, `--link`, `--copy`, `--category`, `--skill`, `--status`, `--include-deprecated`, `--force`, `--dry-run`, `--global`, `--param name=value` |
+| `build`                          | `--out <dir>`, `--force`                                                                                                                                                                        |
+| `install-skill [dest]`           | `--target <preset\|path>`, `--force`, `--global`, `--no-feedback`                                                                                                                               |
 
 ## `.skanvilrc.json`
 
@@ -65,7 +71,8 @@ Every command accepts `-C, --cwd <path>` (library root) and `--json` (except `ev
     "rules": { "max-lines": "warn", "evals-required": "off", "owner-required": "off" }
   },
   "templates": { "dir": ".skanvil/templates" },
-  "sync": { "targets": ["claude"], "mode": "copy" }
+  "sync": { "targets": ["claude"], "mode": "copy" },
+  "telemetry": { "enabled": false, "endpoint": "https://skanvil-hub.internal", "timeoutMs": 1500 }
 }
 ```
 
@@ -93,6 +100,7 @@ Default severity is `error` unless noted. Rules marked with `*` are fixable by `
 - `eval route --json` prints `{ prompt, queryTokens, totalSkills, candidates: [{ skill, rank, score, matchedTokens, description }] }`.
 - `eval triggers --json` prints `{ ok, total, passed, failed, bySplit, results: [{ skill, kind, prompt, split?, passed, expectedRank, topSkill, topScore, targetScore, reason? }] }`.
 - `feedback list --json` prints `{ file, totalEntries, uniqueGroups, invalidLines, groups }` and `feedback promote --json` prints `{ file, dryRun, promoted, skipped, invalidLines, prunedLines }`.
+- `telemetry snapshot|emit --json` and `feedback push --json` print `{ sent, queued, dryRun, skippedReason?, error?, events }`, `telemetry push --json` adds `{ remaining, invalidLines }`, and `telemetry install-hooks --json` prints `{ dryRun, scope, results: [{ agent, file, status }] }`.
 - `index --json` prints `{ updated }`, or `{ upToDate }` with `--check`.
 - `sync --json` prints `{ dryRun, mode, results: [{ target, path, added, updated, unchanged, removed, skipped: [{ skill, reason }], warnings, params, alwaysLoadedTokens }] }`.
 - `add --json` prints `{ skillName, title, type, target, template }`.

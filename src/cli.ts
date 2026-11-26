@@ -12,7 +12,7 @@
 import { Command, Option } from "commander";
 
 import { evalExportCommand, evalRouteCommand, evalTriggersCommand } from "./commands/evals.js";
-import { feedbackListCommand, feedbackPromoteCommand } from "./commands/feedback.js";
+import { feedbackListCommand, feedbackPromoteCommand, feedbackPushCommand } from "./commands/feedback.js";
 import {
   buildCommand,
   diffCommand,
@@ -27,9 +27,17 @@ import {
 } from "./commands/library.js";
 import { isInteractive } from "./commands/shared.js";
 import { addCommand, editCommand, importCommand, listCommand } from "./commands/skills.js";
+import {
+  telemetryEmitCommand,
+  telemetryHookCommand,
+  telemetryInstallHooksCommand,
+  telemetryPushCommand,
+  telemetrySnapshotCommand
+} from "./commands/telemetry.js";
 import { wizardCommand } from "./commands/wizard.js";
 import { RULES } from "./core/validate.js";
 import { TARGET_PRESETS } from "./core/sync.js";
+import { HOOK_AGENTS } from "./core/telemetry-hooks.js";
 import { packageVersion } from "./util/paths.js";
 
 /** commander argument parser that accumulates a repeatable option into an array. */
@@ -229,6 +237,74 @@ export function buildProgram(): Command {
     .addOption(cwdOption())
     .addOption(jsonOption())
     .action(run((options) => feedbackPromoteCommand(options)));
+  feedbackCmd
+    .command("push")
+    .description("send sanitized feedback entries to a self-hosted skanvil-hub server")
+    .option("--file <path>", "path to feedback JSONL file (default: .skanvil-feedback.jsonl)")
+    .option("--skill <name>", "only push entries for one skill")
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL or config)")
+    .option("--api-key <key>", "Bearer ingestion key (default: SKANVIL_TELEMETRY_KEY)")
+    .option("--dry-run", "preview events without sending")
+    .option("--no-queue", "do not buffer locally if delivery fails")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => feedbackPushCommand(options)));
+
+  const telemetryCmd = program
+    .command("telemetry")
+    .description("send opt-in stats, usage events, and agent hook signals to skanvil-hub");
+  telemetryCmd
+    .command("snapshot")
+    .description("send current library stats, validation counts, and eval results to skanvil-hub")
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL or config)")
+    .option("--api-key <key>", "Bearer ingestion key (default: SKANVIL_TELEMETRY_KEY)")
+    .option("--dry-run", "build and print the snapshot without sending")
+    .option("--no-queue", "do not buffer locally if delivery fails")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => telemetrySnapshotCommand(options)));
+  telemetryCmd
+    .command("emit")
+    .description("emit a skill.invoked usage event manually or from automation")
+    .requiredOption("--skill <name>", "skill folder name")
+    .option("--library <name>", "owning library name (default: config name or 'local')")
+    .option("--agent <name>", "coding agent name (e.g. claude, cursor, gemini)")
+    .option("--model <name>", "model identifier")
+    .option("--outcome <value>", "outcome: success, error, friction, or unknown (default: success)")
+    .option("--duration-ms <n>", "execution duration in milliseconds")
+    .option("--tool-calls <n>", "number of tool calls")
+    .option("--failed-tool-calls <n>", "number of failed tool calls")
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL or config)")
+    .option("--api-key <key>", "Bearer ingestion key (default: SKANVIL_TELEMETRY_KEY)")
+    .option("--dry-run", "build event without sending")
+    .option("--no-queue", "do not buffer locally if delivery fails")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => telemetryEmitCommand(options)));
+  telemetryCmd
+    .command("hook")
+    .description("read an agent hook JSON payload on stdin and record skill reads/invocations silently")
+    .requiredOption("--agent <name>", `agent source (${HOOK_AGENTS.join(", ")})`)
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL)")
+    .option("--api-key <key>", "Bearer ingestion key (default: SKANVIL_TELEMETRY_KEY)")
+    .action(run((options) => telemetryHookCommand(options)));
+  telemetryCmd
+    .command("push")
+    .description("flush queued offline telemetry events from local storage to skanvil-hub")
+    .option("--endpoint <url>", "skanvil-hub base URL (default: SKANVIL_TELEMETRY_URL or config)")
+    .option("--api-key <key>", "Bearer ingestion key (default: SKANVIL_TELEMETRY_KEY)")
+    .option("--dry-run", "inspect queued events without sending")
+    .addOption(cwdOption())
+    .addOption(jsonOption())
+    .action(run((options) => telemetryPushCommand(options)));
+  telemetryCmd
+    .command("install-hooks [dest]")
+    .description("install non-blocking telemetry hooks into claude, cursor, and/or gemini settings")
+    .option("--target <name>", `agent preset (${HOOK_AGENTS.join(", ")}); repeatable or comma-separated`, collect)
+    .option("--global", "install into your user home config folders instead of a project")
+    .option("--dry-run", "preview settings changes without writing")
+    .addOption(jsonOption())
+    .action(run((dest, options) => telemetryInstallHooksCommand(dest, options)));
 
   const templates = program.command("templates").description("manage skill templates");
   templates

@@ -1,0 +1,20 @@
+services:
+  skanvil-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "${PORT:-4318}:4318"
+    environment:
+      PORT: "4318"
+      HOST: "0.0.0.0"
+      SKANVIL_HUB_DB_PATH: "/data/skanvil-hub.sqlite"
+      SKANVIL_HUB_API_KEYS: "${SKANVIL_HUB_API_KEYS:-}"
+      SKANVIL_HUB_ADMIN_TOKEN: "${SKANVIL_HUB_ADMIN_TOKEN:-}"
+      SKANVIL_HUB_COOKIE_SECURE: "${SKANVIL_HUB_COOKIE_SECURE:-false}"
+    volumes:
+      - skanvil-hub-data:/data
+    restart: unless-stopped
+
+volumes:
+  skanvil-hub-data:

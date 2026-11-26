@@ -4,5 +4,9 @@ node_modules/
 schema.json
 package-lock.json
 CHANGELOG.md
+hub/node_modules/
+hub/dist/
+hub/data/
+hub/package-lock.json
 # Templates are rendered by skanvil; keep their exact bytes (tabs in README entries, placeholders).
 templates/
