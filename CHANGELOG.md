@@ -1,5 +1,13 @@
 # Changelog
 
+## [2.1.0](https://github.com/JMBargueno/skanvil/compare/v2.0.0...v2.1.0) (2026-11-26)
+
+
+### Features
+
+* add opt-in telemetry, agent hooks and self-hosted skanvil-hub ([95ce663](https://github.com/JMBargueno/skanvil/commit/95ce6637cb28b6fcd7019a44dcba73f632b05afe))
+* add opt-in telemetry, agent hooks and self-hosted skanvil-hub ([9e942f0](https://github.com/JMBargueno/skanvil/commit/9e942f0e221e70b44d7be18668dcc9acf8a30852))
+
 ## [2.0.0](https://github.com/JMBargueno/skanvil/compare/v1.1.1...v2.0.0) (2026-11-25)
 
 
